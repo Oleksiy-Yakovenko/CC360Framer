@@ -14,6 +14,7 @@ struct MetalView: NSViewRepresentable {
         view.framebufferOnly = true
         let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: view.colorPixelFormat)
         renderer.frameProvider = { [frames = model.frames] in frames.next() }
+        renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
         view.delegate = renderer
         context.coordinator.renderer = renderer
         return view
@@ -49,24 +50,55 @@ struct ContentView: View {
         }
     }
 
+    @State private var preset = Exporter.Preset.all[0]
+
     var controls: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             HStack {
                 Button { model.togglePlay() } label: {
                     Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
                 }
                 .keyboardShortcut(.space, modifiers: [])
                 Text(format(model.position)).monospacedDigit()
-                Slider(value: Binding(get: { model.position }, set: { model.scrub(to: $0) }),
-                       in: 0...max(model.duration, 0.1),
-                       onEditingChanged: { editing in
-                           if editing { model.beginScrub() } else { model.endScrub(at: model.position) }
-                       })
+                VStack(spacing: 0) {
+                    Slider(value: Binding(get: { model.position }, set: { model.scrub(to: $0) }),
+                           in: 0...max(model.duration, 0.1),
+                           onEditingChanged: { editing in
+                               if editing { model.beginScrub() } else { model.endScrub(at: model.position) }
+                           })
+                    keyTicks.frame(height: 12)
+                }
                 Text(format(model.duration)).monospacedDigit()
             }
             HStack {
+                Toggle("Auto", isOn: Binding(get: { model.autoFollow }, set: { model.autoFollow = $0 && !model.keyframes.isEmpty }))
+                    .toggleStyle(.button).disabled(model.keyframes.isEmpty)
+                    .help("Follow the camera path")
+                if let p = model.analysisProgress {
+                    ProgressView(value: p).frame(width: 90)
+                    Button("Cancel") { model.cancelJob() }
+                } else {
+                    Button("Analyse") { model.analyze() }.help("Find the subject and build a camera path")
+                }
+                Button("Set key") { model.setKey() }.keyboardShortcut("k", modifiers: [])
+                    .help("Keyframe the current view at the playhead (K)")
+                Button("Delete key") { model.deleteSelectedKey() }.disabled(model.selectedKey == nil)
+                    .keyboardShortcut(.delete, modifiers: [])
+                Button("Clear keys") { model.clearKeys() }.disabled(model.keyframes.isEmpty)
+                Spacer()
+                if let p = model.exportProgress {
+                    ProgressView(value: p).frame(width: 90)
+                    Button("Cancel") { model.cancelJob() }
+                } else {
+                    Picker("", selection: $preset) {
+                        ForEach(Exporter.Preset.all, id: \.self) { Text($0.name).tag($0) }
+                    }.labelsHidden().frame(width: 140)
+                    Button("Export…") { exportPanel() }.disabled(model.duration == 0)
+                }
+            }
+            HStack {
                 Button("Open…") { openPanel() }
-                Text(model.title).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                Text(model.statusText ?? model.title).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
                 Spacer()
                 if !model.audioOptions.isEmpty {
                     Image(systemName: "speaker.wave.2")
@@ -77,6 +109,31 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// Keyframe markers aligned under the seekbar; click one to select it and jump there.
+    var keyTicks: some View {
+        GeometryReader { geo in
+            let inset: CGFloat = 8   // slider thumb radius
+            let width = max(geo.size.width - inset * 2, 1)
+            ForEach(model.keyframes) { key in
+                let selected = key.id == model.selectedKey
+                Image(systemName: "diamond.fill")
+                    .font(.system(size: selected ? 10 : 7))
+                    .foregroundStyle(selected ? Color.accentColor : Color.orange)
+                    .frame(width: 14, height: 12)
+                    .contentShape(Rectangle())
+                    .position(x: inset + width * CGFloat(key.time / max(model.duration, 0.1)), y: 6)
+                    .onTapGesture { model.select(key) }
+            }
+        }
+    }
+
+    func exportPanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Movie]
+        panel.nameFieldStringValue = (model.title as NSString).deletingPathExtension + "-reframed.mp4"
+        if panel.runModal() == .OK, let url = panel.url { model.export(preset: preset, to: url) }
     }
 
     func openPanel() {

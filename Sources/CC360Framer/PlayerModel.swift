@@ -41,15 +41,27 @@ final class PlayerModel: ObservableObject {
     @Published var position: Double = 0
     @Published var audioOptions: [AudioOption] = []
     @Published var errorText: String?
+    @Published var keyframes: [Keyframe] = [] { didSet { path = CameraPath(keys: keyframes) } }
+    @Published var selectedKey: UUID?
+    @Published var autoFollow = false
+    @Published var analysisProgress: Double?
+    @Published var exportProgress: Double?
+    @Published var statusText: String?
+    private(set) var path = CameraPath(keys: [])
+    private var sourceURL: URL?
+    private var sourceAsset: AVURLAsset?
+    private var sourceVideoTracks: [AVAssetTrack] = []
+    private var videoComposition: AVVideoComposition?
+    private var job: CancelFlag?
 
     let frames = FrameSource()
     let viewState = ViewState()
     private(set) var player = AVPlayer()
-    private var item: AVPlayerItem?
-    private var composition: AVMutableComposition?
+    fileprivate var item: AVPlayerItem?
+    fileprivate var composition: AVMutableComposition?
     private var timeObserver: Any?
     private var endObserver: Any?
-    private var scrubbing = false
+    fileprivate var scrubbing = false
     private var tempDir: URL?
 
     func open(_ url: URL) async {
@@ -100,6 +112,10 @@ final class PlayerModel: ObservableObject {
             item.add(output)
 
             self.composition = comp
+            self.videoComposition = vc
+            self.sourceURL = url
+            self.sourceAsset = asset
+            self.sourceVideoTracks = videos
             self.audioOptions = options
             item.audioMix = audioMix()
             self.item = item
@@ -110,10 +126,20 @@ final class PlayerModel: ObservableObject {
             self.title = url.lastPathComponent
             installObservers(item)
             viewState.reset()
+            viewState.onUserLook = { [weak self] in
+                MainActor.assumeIsolated { self?.autoFollow = false }
+            }
+            keyframes = loadKeyframes(for: url)
+            selectedKey = nil
+            autoFollow = !keyframes.isEmpty
             await player.seek(to: .zero)
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil {
                 print("opened: \(options.map(\.label)), item status \(item.status.rawValue)"); fflush(stdout)
-                togglePlay()
+                if let out = ProcessInfo.processInfo.environment["CC360_BATCH"] {
+                    Task { await runBatch(URL(fileURLWithPath: out)) }
+                } else {
+                    togglePlay()
+                }
             }
         } catch {
             errorText = error.localizedDescription
@@ -151,7 +177,7 @@ final class PlayerModel: ObservableObject {
         return "\(index + 1): \(codec) \(kind)"
     }
 
-    private func audioMix() -> AVAudioMix? {
+    fileprivate func audioMix() -> AVAudioMix? {
         guard let composition else { return nil }
         let mix = AVMutableAudioMix()
         mix.inputParameters = audioOptions.compactMap { opt in
@@ -208,4 +234,160 @@ final class PlayerModel: ObservableObject {
             Task { @MainActor in self?.scrubbing = false }
         }
     }
+}
+
+
+// MARK: - Camera path, analysis, export
+
+extension PlayerModel {
+    private func sidecar(for url: URL) -> URL { url.appendingPathExtension("reframe.json") }
+
+    private func loadKeyframes(for url: URL) -> [Keyframe] {
+        guard let data = try? Data(contentsOf: sidecar(for: url)) else { return [] }
+        return (try? JSONDecoder().decode([Keyframe].self, from: data)) ?? []
+    }
+
+    private func saveKeyframes() {
+        guard let sourceURL else { return }
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? enc.encode(keyframes) { try? data.write(to: sidecar(for: sourceURL)) }
+    }
+
+    /// Called every draw: while following, the view tracks the camera path at the playhead.
+    func applyPath() {
+        guard autoFollow, let cam = path.sample(at: player.currentTime().seconds) else { return }
+        viewState.yaw = cam.yaw
+        viewState.pitch = cam.pitch
+        viewState.fovDegrees = cam.fov
+    }
+
+    /// Adds (or replaces) a keyframe at the playhead using the current view.
+    func setKey() {
+        guard item != nil else { return }
+        let k = Keyframe(time: position, yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
+        var keys = keyframes
+        if let i = keys.firstIndex(where: { abs($0.time - position) < 0.15 }) {
+            keys[i] = Keyframe(id: keys[i].id, time: keys[i].time, yaw: k.yaw, pitch: k.pitch, fov: k.fov)
+            selectedKey = keys[i].id
+        } else {
+            keys.append(k)
+            selectedKey = k.id
+        }
+        keyframes = keys.sorted { $0.time < $1.time }
+        autoFollow = true
+        saveKeyframes()
+    }
+
+    func select(_ key: Keyframe) {
+        selectedKey = key.id
+        position = key.time
+        scrub(to: key.time)
+        endScrub(at: key.time)
+    }
+
+    func deleteSelectedKey() {
+        guard let id = selectedKey else { return }
+        keyframes.removeAll { $0.id == id }
+        selectedKey = nil
+        saveKeyframes()
+    }
+
+    func clearKeys() {
+        keyframes = []
+        selectedKey = nil
+        autoFollow = false
+        saveKeyframes()
+    }
+
+    func analyze() {
+        guard let asset = sourceAsset, analysisProgress == nil else { return }
+        let tracks = sourceVideoTracks
+        let flag = CancelFlag()
+        job = flag
+        analysisProgress = 0
+        statusText = "Analysing…"
+        let duration = self.duration
+        let fov = viewState.fovDegrees
+        let box = UncheckedBox((asset, tracks))
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let samples = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, progress: { p in
+                    Task { @MainActor in self?.analysisProgress = p }
+                }, cancel: flag)
+                let keys = PathBuilder.build(samples: samples, duration: duration, fov: fov)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.analysisProgress = nil
+                    if keys.isEmpty {
+                        self.statusText = "No subject found."
+                    } else {
+                        self.keyframes = keys
+                        self.autoFollow = true
+                        self.saveKeyframes()
+                        self.statusText = "Found \(samples.count) observations → \(keys.count) keyframes."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.analysisProgress = nil
+                    self?.statusText = error is CancellationError ? "Analysis cancelled." : error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func cancelJob() { job?.set() }
+
+    /// Headless end-to-end run for testing: analyse, then export (CC360_BATCH=out.mp4).
+    func runBatch(_ out: URL) async {
+        let started = Date()
+        analyze()
+        while analysisProgress != nil {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            print(String(format: "analysis %.0f%% (%.0fs)", (analysisProgress ?? 1) * 100, Date().timeIntervalSince(started))); fflush(stdout)
+        }
+        print("analysis done: \(statusText ?? "?")"); fflush(stdout)
+        if let k = keyframes.first { print("first key: t=\(k.time) yaw=\(k.yaw * 180 / .pi)° pitch=\(k.pitch * 180 / .pi)°") }
+        let exportStart = Date()
+        export(preset: Exporter.Preset.all[0], to: out)
+        while exportProgress != nil {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            print(String(format: "export %.0f%% (%.0fs)", (exportProgress ?? 1) * 100, Date().timeIntervalSince(exportStart))); fflush(stdout)
+        }
+        print("export done: \(statusText ?? "?")"); fflush(stdout)
+        exit(0)
+    }
+
+    func export(preset: Exporter.Preset, to url: URL) {
+        guard let comp = composition, let vc = videoComposition, exportProgress == nil else { return }
+        let flag = CancelFlag()
+        job = flag
+        exportProgress = 0
+        statusText = "Exporting…"
+        let audioIDs = audioOptions.filter(\.enabled).map(\.id)
+        let mix = audioMix()
+        let path = self.path
+        let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
+        let box = UncheckedBox((comp, vc, mix))
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try Exporter.run(composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
+                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, preset: preset, to: url,
+                                 progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
+                await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
+            } catch {
+                await MainActor.run {
+                    self?.exportProgress = nil
+                    self?.statusText = error is CancellationError ? "Export cancelled." : error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+/// Carries non-Sendable AVFoundation objects into a background task.
+final class UncheckedBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
 }
