@@ -8,6 +8,9 @@ if args.first == "--telemetry", args.count > 1 {
     print("last  q: \(t.orientation[t.count - 1])  g: \(t.gravity[t.count - 1])")
     exit(0)
 }
+if args.first == "--analysis-compare" {
+    exit(AnalysisCompare.run(args: Array(args.dropFirst())))
+}
 if args.first == "--stab-test" {
     exit(StabTest.run(args: Array(args.dropFirst())))
 }

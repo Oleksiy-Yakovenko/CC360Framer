@@ -83,6 +83,14 @@ final class Stabilizer {
         return bases[min(max(Int((time * rate).rounded()), 0), bases.count - 1)]
     }
 
+    /// Direction in the virtual camera (yaw/pitch) -> yaw/pitch in the body's axes (the video's frame) at `time`.
+    func toBody(yaw: Float, pitch: Float, at time: Double) -> (yaw: Float, pitch: Float) {
+        let b = basis(at: time)
+        let v = SIMD3<Float>(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
+        let d = b.right * v.x + b.up * v.y + b.forward * v.z
+        return (atan2(d.x, d.z), asin(max(-1, min(1, d.y))))
+    }
+
     /// Direction seen by the body (yaw/pitch in body axes) -> yaw/pitch in the virtual camera at `time`.
     func toVirtual(yaw: Float, pitch: Float, at time: Double) -> (yaw: Float, pitch: Float) {
         let b = basis(at: time)

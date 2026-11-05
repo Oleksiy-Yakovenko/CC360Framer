@@ -34,13 +34,19 @@ enum Analyzer {
     private static let viewSize = 512
 
     /// `step`: analyse every Nth decoded frame (6 ≈ 5 Hz at 30 fps).
+    /// With a `stabilizer`, the views are rendered level with the horizon (people upright, the horizon band
+    /// covered) and the detections are converted back to body-frame directions, so stored observations
+    /// do not depend on the stabilisation mode. `range` limits the pass (used for comparisons).
     static func run(asset: AVAsset, videoTracks: [AVAssetTrack], step: Int = 6,
+                    stabilizer: Stabilizer? = nil, range: CMTimeRange? = nil,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws -> [Observation] {
         guard videoTracks.count == 2, let device = MTLCreateSystemDefaultDevice() else {
             throw Failure(errorDescription: "Analysis needs a two-track 360 file.")
         }
         let renderer = try Renderer(device: device, state: ViewState(), pixelFormat: .bgra8Unorm)
         let reader = try AVAssetReader(asset: asset)
+        if let range { reader.timeRange = range }
+        renderer.state.stabilizer = stabilizer
         let settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: Layout.trackWidth / 4,
@@ -73,6 +79,7 @@ enum Analyzer {
                   let pa = CMSampleBufferGetImageBuffer(a), let pb = CMSampleBufferGetImageBuffer(b),
                   renderer.setStacked(pa, pb) else { continue }
             let t = CMSampleBufferGetPresentationTimeStamp(a).seconds
+            renderer.state.frameTime = t
 
             var obs = Observation(t: t, people: [], salient: [])
             for v in 0..<viewCount {
@@ -88,14 +95,14 @@ enum Analyzer {
                     // People cut by the view edge are seen better in the neighbouring view.
                     let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
                     let area = Float(o.boundingBox.width * o.boundingBox.height) * Float(o.confidence) * (edge < 0.02 ? 0.5 : 1)
-                    obs.people.append(candidate(o.boundingBox, viewYaw: viewYaw, score: area))
+                    obs.people.append(candidate(o.boundingBox, viewYaw: viewYaw, score: area, stabilizer: stabilizer, t: t))
                 }
                 for o in objects.results?.first?.salientObjects ?? [] {
                     // Prefer mid-sized objects: tiny ones are noise, frame-filling ones are just the surroundings.
                     let area = Float(o.boundingBox.width * o.boundingBox.height)
                     let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
                     let score = Float(o.confidence) * min(area * 4, 1) * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
-                    obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score))
+                    obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score, stabilizer: stabilizer, t: t))
                 }
             }
             observations.append(obs)
@@ -115,8 +122,9 @@ enum Analyzer {
         return (atan2(x, z), asin(max(-1, min(1, d.y))))
     }
 
-    private static func candidate(_ box: CGRect, viewYaw: Float, score: Float) -> Candidate {
-        let d = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
+    private static func candidate(_ box: CGRect, viewYaw: Float, score: Float, stabilizer: Stabilizer?, t: Double) -> Candidate {
+        var d = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
+        if let stabilizer { d = stabilizer.toBody(yaw: d.yaw, pitch: d.pitch, at: t) }
         return Candidate(yaw: d.yaw, pitch: d.pitch, score: score)
     }
 }

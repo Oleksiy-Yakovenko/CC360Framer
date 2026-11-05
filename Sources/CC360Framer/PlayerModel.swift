@@ -333,10 +333,10 @@ extension PlayerModel {
         job = flag
         analysisProgress = 0
         statusText = "Analysing…"
-        let box = UncheckedBox((asset, tracks))
+        let box = UncheckedBox((asset, tracks, stabilizer))
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, progress: { p in
+                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, stabilizer: box.value.2, progress: { p in
                     Task { @MainActor in self?.analysisProgress = p }
                 }, cancel: flag)
                 await MainActor.run {
@@ -412,7 +412,9 @@ extension PlayerModel {
     func runBatch(_ out: URL) async {
         let started = Date()
         if ProcessInfo.processInfo.environment["CC360_STYLE"] == "scenery" { style = .scenery }
-        if observations.isEmpty { analyze() } else { buildPath() }
+        if ProcessInfo.processInfo.environment["CC360_NO_ANALYSIS"] != nil {
+            keyframes = []; autoFollow = false   // plain stabilised export of the default view
+        } else if observations.isEmpty { analyze() } else { buildPath() }
         while analysisProgress != nil {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             print(String(format: "analysis %.0f%% (%.0fs)", (analysisProgress ?? 1) * 100, Date().timeIntervalSince(started))); fflush(stdout)

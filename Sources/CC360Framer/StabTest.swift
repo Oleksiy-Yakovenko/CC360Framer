@@ -93,3 +93,42 @@ enum StabTest {
         } catch { print("error: \(error)"); return 1 }
     }
 }
+
+/// `CC360Framer --analysis-compare file.360 [start] [length]`: runs the analyser on the raw camera frame and on
+/// the level (stabilised) frame over the same stretch and compares what it finds.
+enum AnalysisCompare {
+    static func run(args: [String]) -> Int32 {
+        guard let path = args.first else { print("usage: --analysis-compare file.360 [start] [length]"); return 1 }
+        let start = args.count > 1 ? Double(args[1]) ?? 40 : 40
+        let length = args.count > 2 ? Double(args[2]) ?? 40 : 40
+        let url = URL(fileURLWithPath: path)
+        guard let telemetry = Telemetry.load(url: url) else { print("no telemetry"); return 1 }
+        let link = FileManager.default.temporaryDirectory.appendingPathComponent("acmp-\(getpid()).mp4")
+        try? FileManager.default.removeItem(at: link)
+        try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
+        defer { try? FileManager.default.removeItem(at: link) }
+        let asset = AVURLAsset(url: link)
+        let videos = asset.tracks(withMediaType: .video)
+        let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600), duration: CMTime(seconds: length, preferredTimescale: 600))
+        let stab = Stabilizer(telemetry: telemetry, duration: asset.duration.seconds, mode: .smooth)
+        do {
+            for (name, s) in [("raw camera frame", Stabilizer?.none), ("level (stabilised)", stab)] {
+                let began = Date()
+                let obs = try Analyzer.run(asset: asset, videoTracks: videos, stabilizer: s, range: range, progress: { _ in }, cancel: CancelFlag())
+                let withPeople = obs.filter { !$0.people.isEmpty }
+                let top = obs.compactMap { $0.people.max { $0.score < $1.score } }
+                // The rider is rigid with the camera, so its body-frame direction should barely move: spread = stability.
+                let ref = top.sorted { $0.yaw < $1.yaw }[top.count / 2]
+                let near = top.filter { abs(wrapAngle($0.yaw - ref.yaw)) < 40 * .pi / 180 }
+                func sd(_ v: [Float]) -> Float { let m = v.reduce(0, +) / Float(max(v.count, 1)); return (v.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Float(max(v.count, 1))).squareRoot() * 180 / .pi }
+                let sal = obs.flatMap(\.salient)
+                print(String(format: "%@: %d samples, people in %.0f%%, rider-like top detections %d (yaw sd %.1f°, pitch sd %.1f°), mean top score %.3f, people/sample %.2f, salient/sample %.2f (mean score %.2f), %.0fs",
+                             name, obs.count, 100 * Double(withPeople.count) / Double(max(obs.count, 1)), near.count,
+                             sd(near.map(\.yaw)), sd(near.map(\.pitch)), top.map(\.score).reduce(0, +) / Float(max(top.count, 1)),
+                             Double(obs.flatMap(\.people).count) / Double(max(obs.count, 1)), Double(sal.count) / Double(max(obs.count, 1)),
+                             sal.map(\.score).reduce(0, +) / Float(max(sal.count, 1)), Date().timeIntervalSince(began)))
+            }
+            return 0
+        } catch { print("error: \(error)"); return 1 }
+    }
+}

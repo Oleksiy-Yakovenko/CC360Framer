@@ -13,6 +13,7 @@ macOS app that opens GoPro `.360` files, auto-reframes them around a detected su
 
 Debugging: `CC360_DEBUG=1` autoplays and logs frame rate; `CC360_BATCH=out.mp4` (with a file argument, optional `CC360_STYLE=scenery`) runs analyse + export headless;
 `--snapshot stacked.png prefix` renders projection test images (env `CC360_TELEMETRY=file.360 CC360_TIME=sec CC360_MODE=level|smooth CC360_AXES=1,-1,1` to apply stabilisation);
+`--analysis-compare file.360 [start] [length]` compares analysis on the raw vs level frame; `CC360_NO_ANALYSIS=1` with `CC360_BATCH` exports a stabilised default view without any analysis;
 `--telemetry file.360` prints the parsed telemetry; `--stab-test file.360 [start] [length]` measures residual shake per stabilisation mode and telemetry/video time offset.
 
 Not used yet: HiLight tags, GPS and gyro/accelerometer from the telemetry (only orientation and gravity are read).
