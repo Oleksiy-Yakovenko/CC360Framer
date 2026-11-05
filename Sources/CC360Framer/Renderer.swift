@@ -6,7 +6,7 @@ private let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
 
-struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; };
+struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; float3 right; float3 up; float3 forward; };
 struct VOut { float4 pos [[position]]; float2 ndc; };
 
 vertex VOut vs(uint vid [[vertex_id]]) {
@@ -56,6 +56,9 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
         d = float3(sin(lon) * cos(lat), sin(lat), cos(lon) * cos(lat));
     }
 
+    // Virtual (horizon-locked) camera -> camera body axes, which is what the video is stored in.
+    d = normalize(u.right * d.x + u.up * d.y + u.forward * d.z);
+
     float3 a = abs(d);
     bool track0 = (a.x >= a.y && a.x >= a.z) || (a.z >= a.x && a.z >= a.y && d.z > 0.0);
 
@@ -95,7 +98,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var recent: [CVMetalTexture] = []
     private(set) var texture: MTLTexture?
     /// Called each frame; returns a new frame when one is available.
-    var frameProvider: (() -> CVPixelBuffer?)?
+    var frameProvider: (() -> (CVPixelBuffer, Double)?)?
     /// Called at the start of every draw, e.g. to apply the camera path to the view state.
     var preDraw: (() -> Void)?
     private var stackTexture: MTLTexture?
@@ -175,9 +178,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float) {
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         if let texture {
+            let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
             var u = Uniforms(yaw: state.yaw, pitch: state.pitch,
                              tanHalfFov: tan(state.fovDegrees * .pi / 360), aspect: aspect,
-                             cfg: state.cfg, mode: state.mode)
+                             cfg: state.cfg, mode: state.mode,
+                             right: SIMD4(b.right, 0), up: SIMD4(b.up, 0), forward: SIMD4(b.forward, 0))
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setFragmentTexture(texture, index: 0)
@@ -191,7 +196,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         preDraw?()
-        if let pb = frameProvider?() { setFrame(pb) }
+        if let (pb, time) = frameProvider?() { setFrame(pb); state.frameTime = time }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
         pass.colorAttachments[0].loadAction = .clear

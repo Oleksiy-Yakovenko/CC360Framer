@@ -45,8 +45,8 @@ enum SceneryPlanner {
     /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot, rider every cycle.
     private static let cycle: [(Kind, Double)] = [(.forward, 6), (.side, 3.5), (.forward, 6), (.side, 3.5), (.forward, 5), (.rider, 3)]
     private static let dt = 0.2
-    private static let forwardFov: Float = 100
-    private static let closeFov: Float = 80
+    private static let forwardFov: Float = 70
+    private static let closeFov: Float = 55
     private static let sideRange: ClosedRange<Float> = (35 * .pi / 180)...(145 * .pi / 180)
 
     static func plan(_ obs: [Observation], duration: Double) -> [Sample] {
@@ -79,7 +79,7 @@ enum SceneryPlanner {
     }
 
     private static func forwardShot(_ r: Range<Int>) -> [Sample] {
-        r.map { Sample(t: Double($0) * dt, yaw: 0, pitch: -2 * .pi / 180, weight: 1, fov: forwardFov) }
+        r.map { Sample(t: Double($0) * dt, yaw: 0, pitch: 0, weight: 1, fov: forwardFov) }
     }
 
     private static func riderShot(_ obs: [Int: Observation], _ r: Range<Int>, ref: (yaw: Float, pitch: Float)) -> [Sample] {

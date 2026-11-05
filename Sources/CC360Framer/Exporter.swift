@@ -22,12 +22,14 @@ enum Exporter {
     static func run(composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, fallback: (yaw: Float, pitch: Float, fov: Float),
-                    preset: Preset, to url: URL,
+                    stabilizer: Stabilizer?, preset: Preset, to url: URL,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure(errorDescription: "No Metal device.") }
         try? FileManager.default.removeItem(at: url)
         let duration = max(composition.duration.seconds, 0.001)
-        let renderer = try Renderer(device: device, state: ViewState(), pixelFormat: .bgra8Unorm)
+        let state = ViewState()
+        state.stabilizer = stabilizer
+        let renderer = try Renderer(device: device, state: state, pixelFormat: .bgra8Unorm)
 
         let reader = try AVAssetReader(asset: composition)
         let vout = AVAssetReaderVideoCompositionOutput(
@@ -92,6 +94,7 @@ enum Exporter {
                 guard let out, let (cv, target) = renderer.makeTexture(from: out) else { fail(Failure(errorDescription: "Render buffer failed.")); vin.markAsFinished(); group.leave(); return }
                 let pts = CMSampleBufferGetPresentationTimeStamp(sb)
                 renderer.setFrame(src)
+                state.frameTime = pts.seconds
                 let cam = path.sample(at: pts.seconds) ?? fallback
                 renderer.renderSync(to: target, yaw: cam.yaw, pitch: cam.pitch, fov: cam.fov)
                 _ = cv

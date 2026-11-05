@@ -15,6 +15,16 @@ enum Snapshot {
         if args.count >= 6 {
             state.cfg = SIMD4<Float>(args[2...5].map { Float($0) ?? 1 })
         }
+        // Optional stabilisation for calibration: CC360_TELEMETRY=file.360 CC360_TIME=sec CC360_MODE=level|smooth CC360_AXES=-1,-1,1
+        let env = ProcessInfo.processInfo.environment
+        if let axes = env["CC360_AXES"]?.split(separator: ",").compactMap({ Float($0) }), axes.count == 3 {
+            Stabilizer.sensorToRender = SIMD3(axes[0], axes[1], axes[2])
+        }
+        if let file = env["CC360_TELEMETRY"], let t = Telemetry.load(url: URL(fileURLWithPath: file)) {
+            let mode: StabilizeMode = env["CC360_MODE"] == "level" ? .level : .smooth
+            state.stabilizer = Stabilizer(telemetry: t, duration: Double(env["CC360_DURATION"] ?? "") ?? 153.92, mode: mode)
+            state.frameTime = Double(env["CC360_TIME"] ?? "") ?? 0
+        }
         do {
             let tex = try MTKTextureLoader(device: device).newTexture(
                 URL: URL(fileURLWithPath: args[0]),

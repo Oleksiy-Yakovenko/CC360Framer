@@ -17,16 +17,20 @@ enum Layout {
 final class ViewState {
     var yaw: Float = 0            // radians, + = look right
     var pitch: Float = 0          // radians, + = look up
-    var fovDegrees: Float = 90    // vertical field of view
+    var fovDegrees: Float = 70    // vertical field of view
     /// Orientation switches (+1 / -1) kept configurable while the layout is being verified:
     /// track 0 ring direction, track 0 cross direction, track 1 ring direction, track 1 cross direction.
     var cfg = SIMD4<Float>(1, 1, 1, 1)
     /// 0 = rectilinear view, 1 = equirectangular (debug).
     var mode: Float = 0
+    /// Horizon-locked virtual camera; nil = look straight through the camera body's axes.
+    var stabilizer: Stabilizer?
+    /// Time of the frame being drawn, used to look up the stabilised camera.
+    var frameTime: Double = 0
     /// Called when the user takes manual control of the view (drag/zoom).
     var onUserLook: (() -> Void)?
 
-    func reset() { yaw = 0; pitch = 0; fovDegrees = 90 }
+    func reset() { yaw = 0; pitch = 0; fovDegrees = 70 }
 }
 
 struct Uniforms {
@@ -36,4 +40,7 @@ struct Uniforms {
     var aspect: Float
     var cfg: SIMD4<Float>
     var mode: Float
+    var right: SIMD4<Float>      // virtual camera axes in body coordinates (w unused)
+    var up: SIMD4<Float>
+    var forward: SIMD4<Float>
 }

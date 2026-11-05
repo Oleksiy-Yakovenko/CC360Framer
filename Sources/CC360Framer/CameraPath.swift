@@ -76,7 +76,7 @@ enum PathBuilder {
         static let scenery = Params(sigma: 3, medianRadius: 1, maxYawSpeed: 70 * .pi / 180, maxPitchSpeed: 40 * .pi / 180)
     }
 
-    static func build(samples: [Sample], duration: Double, fov: Float = 90, params: Params = .follow) -> [Keyframe] {
+    static func build(samples: [Sample], duration: Double, fov: Float = 70, params: Params = .follow) -> [Keyframe] {
         let dt = 0.2
         let n = max(Int(duration / dt) + 1, 2)
         // Resample to a uniform grid; hold the last observation through gaps.

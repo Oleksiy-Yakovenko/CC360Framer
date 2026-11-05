@@ -15,7 +15,7 @@ final class FrameSource {
     private var count = 0
     private var lastReport = CACurrentMediaTime()
 
-    func next() -> CVPixelBuffer? {
+    func next() -> (CVPixelBuffer, Double)? {
         guard let output else { return nil }
         let t = output.itemTime(forHostTime: CACurrentMediaTime())
         guard output.hasNewPixelBuffer(forItemTime: t) else { return nil }
@@ -29,7 +29,7 @@ final class FrameSource {
                 count = 0; lastReport = now
             }
         }
-        return pb
+        return pb.map { ($0, t.seconds) }
     }
 }
 
@@ -48,6 +48,9 @@ final class PlayerModel: ObservableObject {
     @Published var exportProgress: Double?
     @Published var statusText: String?
     @Published var style: PathStyle = .follow
+    @Published var stabilization: StabilizeMode = .smooth
+    private var telemetry: Telemetry?
+    private(set) var stabilizer: Stabilizer?
     /// Raw detections from the last analysis; lets the style change without re-analysing.
     @Published private(set) var observations: [Observation] = []
     /// True once the user edited keyframes by hand (or loaded them from disk); style changes then ask for an explicit rebuild.
@@ -134,6 +137,8 @@ final class PlayerModel: ObservableObject {
             viewState.onUserLook = { [weak self] in
                 MainActor.assumeIsolated { self?.autoFollow = false }
             }
+            telemetry = Telemetry.load(url: url)
+            rebuildStabilizer()
             keyframes = loadKeyframes(for: url)
             observations = loadObservations(for: url)
             keysEdited = !keyframes.isEmpty
@@ -350,9 +355,38 @@ extension PlayerModel {
         }
     }
 
+    private func rebuildStabilizer() {
+        guard let telemetry else {
+            stabilizer = nil
+            viewState.stabilizer = nil
+            if stabilization != .off { statusText = "No orientation telemetry in this file: stabilisation unavailable." }
+            return
+        }
+        stabilizer = Stabilizer(telemetry: telemetry, duration: duration, mode: stabilization)
+        viewState.stabilizer = stabilizer
+    }
+
+    /// Switching stabilisation changes what the path is relative to, so regenerate it like a style change.
+    func stabilizationChanged() {
+        rebuildStabilizer()
+        styleChanged()
+    }
+
+    /// Observations expressed in the stabilised virtual camera (the analyser stores body-frame directions).
+    private func virtualObservations() -> [Observation] {
+        guard let stabilizer else { return observations }
+        func convert(_ c: Candidate, _ t: Double) -> Candidate {
+            let v = stabilizer.toVirtual(yaw: c.yaw, pitch: c.pitch, at: t)
+            return Candidate(yaw: v.yaw, pitch: v.pitch, score: c.score)
+        }
+        return observations.map { o in
+            Observation(t: o.t, people: o.people.map { convert($0, o.t) }, salient: o.salient.map { convert($0, o.t) })
+        }
+    }
+
     /// Replaces the keyframes with a path generated from the stored observations in the chosen style.
     func buildPath() {
-        let keys = style.keyframes(from: observations, duration: duration, fov: 90)
+        let keys = style.keyframes(from: virtualObservations(), duration: duration, fov: 70)
         guard !keys.isEmpty else { statusText = "Nothing found to build a path from."; return }
         keyframes = keys
         selectedKey = nil
@@ -378,14 +412,14 @@ extension PlayerModel {
     func runBatch(_ out: URL) async {
         let started = Date()
         if ProcessInfo.processInfo.environment["CC360_STYLE"] == "scenery" { style = .scenery }
-        analyze()
+        if observations.isEmpty { analyze() } else { buildPath() }
         while analysisProgress != nil {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             print(String(format: "analysis %.0f%% (%.0fs)", (analysisProgress ?? 1) * 100, Date().timeIntervalSince(started))); fflush(stdout)
         }
         print("analysis done: \(statusText ?? "?")"); fflush(stdout)
         for st in PathStyle.allCases {
-            let keys = st.keyframes(from: observations, duration: duration, fov: 90)
+            let keys = st.keyframes(from: virtualObservations(), duration: duration, fov: 70)
             print("style \(st.rawValue): \(keys.count) keyframes")
         }
         for k in keyframes.prefix(40) {
@@ -411,11 +445,11 @@ extension PlayerModel {
         let mix = audioMix()
         let path = self.path
         let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
-        let box = UncheckedBox((comp, vc, mix))
+        let box = UncheckedBox((comp, vc, mix, stabilizer))
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try Exporter.run(composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
-                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, preset: preset, to: url,
+                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, stabilizer: box.value.3, preset: preset, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
             } catch {

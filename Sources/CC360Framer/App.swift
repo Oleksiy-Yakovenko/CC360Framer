@@ -77,6 +77,9 @@ struct ContentView: View {
                 Picker("", selection: Binding(get: { model.style }, set: { model.style = $0; model.styleChanged() })) {
                     ForEach(PathStyle.allCases) { Text($0.rawValue).tag($0) }
                 }.labelsHidden().frame(width: 150).help("How the camera path is generated")
+                Picker("", selection: Binding(get: { model.stabilization }, set: { model.stabilization = $0; model.stabilizationChanged() })) {
+                    ForEach(StabilizeMode.allCases) { Text("Stabilise: \($0.rawValue)").tag($0) }
+                }.labelsHidden().frame(width: 190).help("Horizon lock and shake removal from the camera's motion data")
                 if let p = model.analysisProgress {
                     ProgressView(value: p).frame(width: 90)
                     Button("Cancel") { model.cancelJob() }
