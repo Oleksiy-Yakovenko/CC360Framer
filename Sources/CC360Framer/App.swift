@@ -13,7 +13,7 @@ struct MetalView: NSViewRepresentable {
         view.preferredFramesPerSecond = 60
         view.framebufferOnly = true
         let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: view.colorPixelFormat)
-        renderer.frameProvider = { [frames = model.frames] in frames.next() }
+        renderer.frameProvider = { [frames = model.frames] host in frames.next(at: host) }
         renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
         view.delegate = renderer
         context.coordinator.renderer = renderer

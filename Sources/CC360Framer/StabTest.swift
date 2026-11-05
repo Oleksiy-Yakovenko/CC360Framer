@@ -22,12 +22,29 @@ enum StabTest {
         let videos = asset.tracks(withMediaType: .video)
         guard videos.count == 2 else { print("need two video tracks"); return 1 }
 
-        // Variants: modes plus time offsets (in frames) of the telemetry against the video.
-        struct Variant { let name: String; let stabilizer: Stabilizer?; let offset: Int }
-        let smooth = Stabilizer(telemetry: telemetry, duration: duration, mode: .smooth)
+        // Variants: stabiliser configurations plus telemetry time offsets (in frames, fractional allowed).
+        struct Variant { let name: String; let stabilizer: Stabilizer?; let offset: Double }
+        func make(_ mode: StabilizeMode, up: Stabilizer.UpSource) -> Stabilizer {
+            Stabilizer.upSource = up
+            defer { Stabilizer.upSource = .orientation }
+            return Stabilizer(telemetry: telemetry, duration: duration, mode: mode)
+        }
+        let env = ProcessInfo.processInfo.environment
         var variants = [Variant(name: "off", stabilizer: nil, offset: 0),
-                        Variant(name: "level", stabilizer: Stabilizer(telemetry: telemetry, duration: duration, mode: .level), offset: 0)]
-        for k in [-6, -4, -3, -2, -1, 0, 1, 2, 3, 4, 6] { variants.append(Variant(name: "smooth offset \(k)f", stabilizer: smooth, offset: k)) }
+                        Variant(name: "smooth (gravity up)", stabilizer: make(.smooth, up: .gravity), offset: 0),
+                        Variant(name: "smooth (orientation up)", stabilizer: make(.smooth, up: .orientation), offset: 0)]
+        if env["CC360_SIGMAS"] != nil {
+            for sec in [1.5, 3.0] as [Float] {
+                Stabilizer.smoothingSeconds = sec
+                variants.append(Variant(name: "smooth, heading sigma \(sec) s", stabilizer: make(.smooth, up: .gravity), offset: 0))
+            }
+            Stabilizer.smoothingSeconds = 0.7
+        }
+        if env["CC360_SCAN"] != nil {
+            for k in stride(from: -1.0, through: 1.0, by: 0.25) where k != 0 {
+                variants.append(Variant(name: String(format: "orientation up, offset %+.2f f", k), stabilizer: make(.smooth, up: .orientation), offset: k))
+            }
+        }
 
         do {
             let state = ViewState()
@@ -43,7 +60,7 @@ enum StabTest {
             outs.forEach { reader.add($0) }
             guard reader.startReading() else { print("cannot read: \(String(describing: reader.error))"); return 1 }
 
-            let size = (w: 480, h: 270)
+            let size = (w: Int(env["CC360_W"] ?? "") ?? 1920, h: (Int(env["CC360_W"] ?? "") ?? 1920) * 9 / 16)
             func makeTarget() -> (CVPixelBuffer, MTLTexture, CVMetalTexture) {
                 var pb: CVPixelBuffer?
                 CVPixelBufferCreate(nil, size.w, size.h, kCVPixelFormatType_32BGRA, [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [String: Any]()] as CFDictionary, &pb)
@@ -59,7 +76,7 @@ enum StabTest {
                 let t = CMSampleBufferGetPresentationTimeStamp(a).seconds
                 for (i, v) in variants.enumerated() {
                     state.stabilizer = v.stabilizer
-                    state.frameTime = t + Double(v.offset) / 29.97
+                    state.frameTime = t + v.offset / 29.97
                     let cur = targets[i][n % 2], prev = targets[i][(n + 1) % 2]
                     renderer.renderSync(to: cur.1, yaw: 0, pitch: 0, fov: 70)
                     if n > 0 {
@@ -75,19 +92,22 @@ enum StabTest {
             }
             let degPerPx = 70.0 / Double(size.h)
             print("frames: \(n)  view 70° vertical, \(size.w)x\(size.h), \(String(format: "%.3f", degPerPx))°/px")
-            print("residual = per-frame image shift minus its 0.15 s gaussian trend, trimmed to the central 90%")
+            print("Image motion of the rendered view by frequency band (RMS, degrees; horizontal / vertical). Zero = perfectly still.")
+            // Position series split into bands with gaussian low-passes: >0.1 Hz includes slow sway,
+            // 1-3 Hz wobble, and >3 Hz vibration. Sigmas in frames (30 fps).
+            func band(_ cum: [Float], from lo: Float, to hi: Float?) -> Float {
+                let a = Gaussian.smooth(cum, sigma: lo)
+                let b = hi.map { Gaussian.smooth(cum, sigma: $0) } ?? cum
+                let d = zip(b, a).map { $0 - $1 }
+                let trim = d.dropFirst(60).dropLast(60)   // ignore filter edges
+                return (trim.map { $0 * $0 }.reduce(0, +) / Float(max(trim.count, 1))).squareRoot()
+            }
             for (i, v) in variants.enumerated() {
-                // Steps between consecutive frames; high-pass at ~0.15 s so real turns (slow) drop out and shake stays.
-                func residual(_ cum: [Float]) -> (rms: Float, p90: Float) {
-                    let steps = zip(cum.dropFirst(), cum).map { $0 - $1 }
-                    let low = Gaussian.smooth(steps, sigma: 4.5)
-                    let r = zip(steps, low).map { abs($0 - $1) }.sorted()
-                    let kept = r.prefix(Int(Float(r.count) * 0.9))
-                    return ((kept.map { $0 * $0 }.reduce(0, +) / Float(max(kept.count, 1))).squareRoot(), r[Int(Float(r.count) * 0.9)])
+                func row(_ lo: Float, _ hi: Float?) -> String {
+                    String(format: "%.3f / %.3f", Double(band(xs[i], from: lo, to: hi)) * degPerPx, Double(band(ys[i], from: lo, to: hi)) * degPerPx)
                 }
-                let h = residual(xs[i]), vv = residual(ys[i])
-                print(String(format: "%-20@ horizontal %.2f px (%.3f°)   vertical %.2f px (%.3f°)", v.name as NSString,
-                             h.rms, Double(h.rms) * degPerPx, vv.rms, Double(vv.rms) * degPerPx))
+                print("\(v.name)")
+                print("    sway   0.1-0.5 Hz: \(row(45, 9))   wobble 0.5-2 Hz: \(row(9, 2.3))   shake >2 Hz: \(row(2.3, nil))")
             }
             return 0
         } catch { print("error: \(error)"); return 1 }

@@ -6,7 +6,7 @@ private let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
 
-struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; float3 right; float3 up; float3 forward; };
+struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; float yuv; float3 right; float3 up; float3 forward; };
 struct VOut { float4 pos [[position]]; float2 ndc; };
 
 vertex VOut vs(uint vid [[vertex_id]]) {
@@ -24,25 +24,32 @@ constant float STRIP = 5760.0;
 
 // Samples the continuous strip (0..5760 px) of one track. The strip is stored as tiles of
 // 992 / 3904 / 992 px with 64 px of overlap at each seam; the overlaps are feathered.
-static float3 sampleStrip(texture2d<float> tex, sampler smp, float c, float y, float yOff) {
+static float3 rgbAt(constant U& u, texture2d<float> tex, texture2d<float> texC, sampler smp, float2 uv) {
+    if (u.yuv < 0.5) return tex.sample(smp, uv).rgb;
+    float y = tex.sample(smp, uv).r;
+    float2 c = texC.sample(smp, uv).rg - 0.5;
+    return saturate(float3(y + 1.5748 * c.y, y - 0.1873 * c.x - 0.4681 * c.y, y + 1.8556 * c.x));
+}
+
+static float3 sampleStrip(constant U& u, texture2d<float> tex, texture2d<float> texC, sampler smp, float c, float y, float yOff) {
     c = clamp(c, 0.0, STRIP - 0.001);
     float py = (y + yOff) / (2.0 * TH);
     float x1 = c, x2 = c + 64.0, x3 = c + 128.0;
-    if (c < 928.0) return tex.sample(smp, float2(x1 / TW, py)).rgb;
+    if (c < 928.0) return rgbAt(u, tex, texC, smp, float2(x1 / TW, py));
     if (c < 992.0) {
         float t = (c - 928.0) / 64.0;
-        return mix(tex.sample(smp, float2(x1 / TW, py)).rgb, tex.sample(smp, float2(x2 / TW, py)).rgb, t);
+        return mix(rgbAt(u, tex, texC, smp, float2(x1 / TW, py)), rgbAt(u, tex, texC, smp, float2(x2 / TW, py)), t);
     }
-    if (c < 4768.0) return tex.sample(smp, float2(x2 / TW, py)).rgb;
+    if (c < 4768.0) return rgbAt(u, tex, texC, smp, float2(x2 / TW, py));
     if (c < 4832.0) {
         float t = (c - 4768.0) / 64.0;
-        return mix(tex.sample(smp, float2(x2 / TW, py)).rgb, tex.sample(smp, float2(x3 / TW, py)).rgb, t);
+        return mix(rgbAt(u, tex, texC, smp, float2(x2 / TW, py)), rgbAt(u, tex, texC, smp, float2(x3 / TW, py)), t);
     }
-    return tex.sample(smp, float2(x3 / TW, py)).rgb;
+    return rgbAt(u, tex, texC, smp, float2(x3 / TW, py));
 }
 
 fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
-                   texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+                   texture2d<float> tex [[texture(0)]], texture2d<float> texC [[texture(1)]], sampler smp [[sampler(0)]]) {
     float3 d;
     if (u.mode < 0.5) {
         d = normalize(float3(in.ndc.x * u.aspect * u.tanHalfFov, in.ndc.y * u.tanHalfFov, 1.0));
@@ -83,7 +90,7 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
         yOff = TH;
     }
     float y = clamp((0.5 - 0.5 * v) * TH, 0.5, TH - 0.5);
-    return float4(sampleStrip(tex, smp, c, y, yOff), 1.0);
+    return float4(sampleStrip(u, tex, texC, smp, c, y, yOff), 1.0);
 }
 """
 
@@ -96,9 +103,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     let state: ViewState
     private var cache: CVMetalTextureCache!
     private var recent: [CVMetalTexture] = []
-    private(set) var texture: MTLTexture?
+    private(set) var texture: MTLTexture?          // BGRA image, or the luma plane of a YCbCr frame
+    private var chroma: MTLTexture?                // CbCr plane when the frame is YCbCr
     /// Called each frame; returns a new frame when one is available.
-    var frameProvider: (() -> (CVPixelBuffer, Double)?)?
+    var frameProvider: ((CFTimeInterval) -> (CVPixelBuffer, Double)?)?
+    /// Host time the frame being drawn will be shown at (set by the display link).
+    var targetHostTime: CFTimeInterval = 0
     /// Called at the start of every draw, e.g. to apply the camera path to the view state.
     var preDraw: (() -> Void)?
     private var stackTexture: MTLTexture?
@@ -131,13 +141,27 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func setFrame(_ pb: CVPixelBuffer) {
+        if CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+            func plane(_ i: Int, _ f: MTLPixelFormat) -> (CVMetalTexture, MTLTexture)? {
+                var cv: CVMetalTexture?
+                guard CVMetalTextureCacheCreateTextureFromImage(nil, cache, pb, nil, f, CVPixelBufferGetWidthOfPlane(pb, i),
+                                                                CVPixelBufferGetHeightOfPlane(pb, i), i, &cv) == kCVReturnSuccess,
+                      let cv, let t = CVMetalTextureGetTexture(cv) else { return nil }
+                return (cv, t)
+            }
+            guard let (cy, ty) = plane(0, .r8Unorm), let (cc, tc) = plane(1, .rg8Unorm) else { return }
+            recent += [cy, cc]
+            if recent.count > 8 { recent.removeFirst(2) }   // keep in-flight frames alive
+            texture = ty; chroma = tc
+            return
+        }
         guard let (cvTex, t) = makeTexture(from: pb) else { return }
         recent.append(cvTex)
-        if recent.count > 4 { recent.removeFirst() }   // keep in-flight frames alive
-        texture = t
+        if recent.count > 4 { recent.removeFirst() }
+        texture = t; chroma = nil
     }
 
-    func setTexture(_ t: MTLTexture) { texture = t }
+    func setTexture(_ t: MTLTexture) { texture = t; chroma = nil }
 
     /// Stacks the two lens frames (any matching size) into one texture and makes it current.
     func setStacked(_ a: CVPixelBuffer, _ b: CVPixelBuffer) -> Bool {
@@ -158,7 +182,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         cmd.commit()
         cmd.waitUntilCompleted()
         _ = (ca, cb2)
-        texture = dst
+        texture = dst; chroma = nil
         return true
     }
 
@@ -181,11 +205,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
             var u = Uniforms(yaw: state.yaw, pitch: state.pitch,
                              tanHalfFov: tan(state.fovDegrees * .pi / 360), aspect: aspect,
-                             cfg: state.cfg, mode: state.mode,
+                             cfg: state.cfg, mode: state.mode, yuv: chroma == nil ? 0 : 1,
                              right: SIMD4(b.right, 0), up: SIMD4(b.up, 0), forward: SIMD4(b.forward, 0))
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setFragmentTexture(texture, index: 0)
+            enc.setFragmentTexture(chroma ?? texture, index: 1)
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
@@ -195,15 +220,25 @@ final class Renderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
+        let began = CACurrentMediaTime()
+        var drawableWaited = 0.0
+        defer { if Pacing.enabled { Pacing.timing(drawableWait: drawableWaited, body: CACurrentMediaTime() - began - drawableWaited) } }
         preDraw?()
-        if let (pb, time) = frameProvider?() { setFrame(pb); state.frameTime = time }
+        if let (pb, time) = frameProvider?(targetHostTime > 0 ? targetHostTime : CACurrentMediaTime()) { setFrame(pb); state.frameTime = time }
+        let waitStart = CACurrentMediaTime()
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
+        drawableWaited = CACurrentMediaTime() - waitStart
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
         let size = view.drawableSize
         encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)))
         cb.present(drawable)
+        if Pacing.enabled {
+            Pacing.drew()
+            let pts = state.frameTime
+            drawable.addPresentedHandler { Pacing.presented(at: $0.presentedTime, pts: pts) }
+        }
         cb.commit()
     }
 }
@@ -211,6 +246,26 @@ final class Renderer: NSObject, MTKViewDelegate {
 /// MTKView with mouse look: drag to look around, scroll to zoom, double-click to reset.
 final class LookView: MTKView {
     var state: ViewState!
+    private var link: CADisplayLink?
+
+    /// Drawing is driven by the display link rather than MTKView's own timer: the video frame is chosen for the
+    /// upcoming vsync, which keeps 30 fps video on a 60 Hz display evenly paced.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        link?.invalidate()
+        link = nil
+        guard window != nil else { return }
+        isPaused = true
+        enableSetNeedsDisplay = false
+        let l = displayLink(target: self, selector: #selector(tick(_:)))
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    @objc private func tick(_ l: CADisplayLink) {
+        (delegate as? Renderer)?.targetHostTime = l.targetTimestamp
+        draw()
+    }
 
     override var acceptsFirstResponder: Bool { true }
 

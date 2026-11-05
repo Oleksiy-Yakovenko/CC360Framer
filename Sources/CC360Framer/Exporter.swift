@@ -34,7 +34,7 @@ enum Exporter {
         let reader = try AVAssetReader(asset: composition)
         let vout = AVAssetReaderVideoCompositionOutput(
             videoTracks: composition.tracks(withMediaType: .video),
-            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                             kCVPixelBufferMetalCompatibilityKey as String: true])
         vout.videoComposition = videoComposition
         vout.alwaysCopiesSampleData = false

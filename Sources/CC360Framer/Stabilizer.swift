@@ -25,8 +25,21 @@ final class Stabilizer {
     /// It mirrors x, so rotation axes need the extra determinant sign below.
     nonisolated(unsafe) static var sensorToRender = SIMD3<Float>(1, -1, 1)
 
+    /// How to treat IORI, the image-vs-body rotation. The camera has already rotated the stored image by it
+    /// (roll correction), so sampling directions must be rotated by it too: measured 30% less residual shake
+    /// than ignoring it, while the opposite sign is worse.
+    enum IORI { case ignore, forward, inverse }
+    nonisolated(unsafe) static var iori: IORI = .forward
+
+    /// Where the horizon (up vector) comes from: the per-frame gravity vector, or the gyro-integrated orientation
+    /// anchored to a heavily smoothed gravity (immune to accelerometer noise from engine vibration).
+    enum UpSource { case gravity, orientation }
+    nonisolated(unsafe) static var upSource: UpSource = .orientation
+    /// Gravity smoothing for `.orientation` (seconds).
+    static let anchorSeconds: Float = 2.0
+
     /// Heading smoothing (seconds, gaussian sigma) for `.smooth`.
-    static let smoothingSeconds: Float = 0.7
+    nonisolated(unsafe) static var smoothingSeconds: Float = 0.7
 
     private var bases: [Basis]
     private let rate: Double
@@ -39,14 +52,24 @@ final class Stabilizer {
 
         // Body-frame "up" per frame, lightly smoothed (3-tap) to take the edge off sensor noise.
         let rawUp = telemetry.gravity.prefix(n).map { simd_normalize(-($0 * map)) }
-        let up: [SIMD3<Float>] = (0..<n).map { i in
-            simd_normalize(rawUp[max(i - 1, 0)] + 2 * rawUp[i] + rawUp[min(i + 1, n - 1)])
-        }
         // Orientation quaternions in render axes. Axes are pseudovectors: mapping them through a
         // reflection S gives det(S) * S * axis.
         let det = map.x * map.y * map.z
         let q: [simd_quatf] = telemetry.orientation.prefix(n).map {
             simd_normalize(simd_quatf(ix: det * $0.y * map.x, iy: det * $0.z * map.y, iz: det * $0.w * map.z, r: $0.x))
+        }
+        var up: [SIMD3<Float>] = (0..<n).map { i in
+            simd_normalize(rawUp[max(i - 1, 0)] + 2 * rawUp[i] + rawUp[min(i + 1, n - 1)])
+        }
+        if Self.upSource == .orientation {
+            // Gravity expressed in the start frame is constant for a rigid world: average it over seconds,
+            // then rotate it back into the body with the (gyro-integrated) orientation at every frame.
+            let world = (0..<n).map { q[$0].inverse.act(rawUp[$0]) }
+            let sigma = Float(rate) * Self.anchorSeconds
+            let wx = Gaussian.smooth(world.map { $0.x }, sigma: sigma)
+            let wy = Gaussian.smooth(world.map { $0.y }, sigma: sigma)
+            let wz = Gaussian.smooth(world.map { $0.z }, sigma: sigma)
+            up = (0..<n).map { i in simd_normalize(q[i].act(simd_normalize(SIMD3(wx[i], wy[i], wz[i])))) }
         }
 
         var headings = [SIMD3<Float>](repeating: [0, 0, 1], count: n)
@@ -69,18 +92,33 @@ final class Stabilizer {
             }
         }
 
+        let correction: [simd_quatf?] = (0..<n).map { i in
+            guard Self.iori != .ignore, i < telemetry.imageOrientation.count else { return nil }
+            let r = telemetry.imageOrientation[i], det = map.x * map.y * map.z
+            let qi = simd_normalize(simd_quatf(ix: det * r.y * map.x, iy: det * r.z * map.y, iz: det * r.w * map.z, r: r.x))
+            return Self.iori == .forward ? qi : qi.inverse
+        }
         bases = (0..<n).map { i in
             let u = up[i]
             var f = headings[i] - simd_dot(headings[i], u) * u
             if simd_length(f) < 1e-4 { f = [0, 0, 1] - u.z * u }
             f = simd_normalize(f)
-            return Basis(right: simd_cross(u, f), up: u, forward: f)
+            var b = Basis(right: simd_cross(u, f), up: u, forward: f)
+            if let c = correction[i] { b = Basis(right: c.act(b.right), up: c.act(b.up), forward: c.act(b.forward)) }
+            return b
         }
     }
 
+    /// Linear blend between the two nearest frames' cameras (re-orthonormalised), so sub-frame times are exact.
     func basis(at time: Double) -> Basis {
         if bases.count == 1 { return bases[0] }
-        return bases[min(max(Int((time * rate).rounded()), 0), bases.count - 1)]
+        let f = min(max(time * rate, 0), Double(bases.count - 1))
+        let i = min(Int(f), bases.count - 2), w = Float(f - Double(i))
+        let a = bases[i], b = bases[i + 1]
+        let up = simd_normalize(a.up * (1 - w) + b.up * w)
+        var fw = a.forward * (1 - w) + b.forward * w
+        fw = simd_normalize(fw - simd_dot(fw, up) * up)
+        return Basis(right: simd_cross(up, fw), up: up, forward: fw)
     }
 
     /// Direction in the virtual camera (yaw/pitch) -> yaw/pitch in the body's axes (the video's frame) at `time`.

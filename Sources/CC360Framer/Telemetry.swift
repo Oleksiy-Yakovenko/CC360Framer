@@ -7,6 +7,8 @@ struct Telemetry {
     var orientation: [SIMD4<Float>]
     /// Gravity direction in camera axes (unit-ish; points down).
     var gravity: [SIMD3<Float>]
+    /// Image orientation relative to the camera body, quaternion (w, x, y, z); a roll-only correction in these files.
+    var imageOrientation: [SIMD4<Float>] = []
 
     var count: Int { min(orientation.count, gravity.count) }
 
@@ -15,7 +17,7 @@ struct Telemetry {
         guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? fh.close() }
         guard let moov = readMoov(fh), let samples = gpmdSamples(moov) else { return nil }
-        var t = Telemetry(orientation: [], gravity: [])
+        var t = Telemetry(orientation: [], gravity: [], imageOrientation: [])
         for (offset, size) in samples {
             guard (try? fh.seek(toOffset: offset)) != nil, let data = try? fh.read(upToCount: size), data.count == size else { continue }
             parseGPMF([UInt8](data), into: &t)
@@ -145,10 +147,11 @@ struct Telemetry {
                 let items = klvs(b, strm.data)
                 guard let scal = items.first(where: { $0.key == "SCAL" }) else { continue }
                 let scale = max(int16s(b, scal, 0, 1)[0], 1)
-                for k in items where (k.key == "CORI" || k.key == "GRAV") && k.type == UInt8(ascii: "s") {
+                for k in items where (k.key == "CORI" || k.key == "GRAV" || k.key == "IORI") && k.type == UInt8(ascii: "s") {
                     for i in 0..<k.repeats {
                         let v = int16s(b, k, i, k.size / 2).map { $0 / scale }
                         if k.key == "CORI", v.count == 4 { t.orientation.append(SIMD4(v[0], v[1], v[2], v[3])) }
+                        if k.key == "IORI", v.count == 4 { t.imageOrientation.append(SIMD4(v[0], v[1], v[2], v[3])) }
                         if k.key == "GRAV", v.count == 3 { t.gravity.append(SIMD3(v[0], v[1], v[2])) }
                     }
                 }

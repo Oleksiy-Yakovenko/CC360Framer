@@ -15,11 +15,15 @@ final class FrameSource {
     private var count = 0
     private var lastReport = CACurrentMediaTime()
 
-    func next() -> (CVPixelBuffer, Double)? {
+    /// `hostTime`: when the frame will be on screen (the display link's target), not "now".
+    func next(at hostTime: CFTimeInterval) -> (CVPixelBuffer, Double)? {
         guard let output else { return nil }
-        let t = output.itemTime(forHostTime: CACurrentMediaTime())
+        let t = output.itemTime(forHostTime: hostTime)
         guard output.hasNewPixelBuffer(forItemTime: t) else { return nil }
-        let pb = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+        // The frame's own timestamp, not the host clock: the stabilised camera must match the image on screen.
+        var shown = CMTime.zero
+        let pb = output.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: &shown)
+        if Pacing.enabled, pb != nil { Pacing.newFrame() }
         if debug, let pb {
             count += 1
             let now = CACurrentMediaTime()
@@ -29,7 +33,7 @@ final class FrameSource {
                 count = 0; lastReport = now
             }
         }
-        return pb.map { ($0, t.seconds) }
+        return pb.map { ($0, shown.isValid ? shown.seconds : t.seconds) }
     }
 }
 
@@ -114,7 +118,7 @@ final class PlayerModel: ObservableObject {
             let item = AVPlayerItem(asset: comp)
             item.videoComposition = vc
             let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                 kCVPixelBufferMetalCompatibilityKey as String: true,
             ])
             item.add(output)
@@ -147,7 +151,13 @@ final class PlayerModel: ObservableObject {
             await player.seek(to: .zero)
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil {
                 print("opened: \(options.map(\.label)), item status \(item.status.rawValue)"); fflush(stdout)
-                if let out = ProcessInfo.processInfo.environment["CC360_BATCH"] {
+                if let secs = Pacing.seconds {
+                    if ProcessInfo.processInfo.environment["CC360_NOPLAY"] == nil { togglePlay() }
+                    Task {
+                        try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
+                        Pacing.report(); exit(0)
+                    }
+                } else if let out = ProcessInfo.processInfo.environment["CC360_BATCH"] {
                     Task { await runBatch(URL(fileURLWithPath: out)) }
                 } else {
                     togglePlay()
@@ -209,7 +219,7 @@ final class PlayerModel: ObservableObject {
 
     private func installObservers(_ item: AVPlayerItem) {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] t in
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self, !self.scrubbing else { return }
                 self.position = t.seconds
