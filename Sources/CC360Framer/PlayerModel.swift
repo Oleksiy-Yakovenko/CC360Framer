@@ -47,6 +47,11 @@ final class PlayerModel: ObservableObject {
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
     @Published var statusText: String?
+    @Published var style: PathStyle = .follow
+    /// Raw detections from the last analysis; lets the style change without re-analysing.
+    @Published private(set) var observations: [Observation] = []
+    /// True once the user edited keyframes by hand (or loaded them from disk); style changes then ask for an explicit rebuild.
+    private var keysEdited = false
     private(set) var path = CameraPath(keys: [])
     private var sourceURL: URL?
     private var sourceAsset: AVURLAsset?
@@ -130,6 +135,8 @@ final class PlayerModel: ObservableObject {
                 MainActor.assumeIsolated { self?.autoFollow = false }
             }
             keyframes = loadKeyframes(for: url)
+            observations = loadObservations(for: url)
+            keysEdited = !keyframes.isEmpty
             selectedKey = nil
             autoFollow = !keyframes.isEmpty
             await player.seek(to: .zero)
@@ -247,6 +254,18 @@ extension PlayerModel {
         return (try? JSONDecoder().decode([Keyframe].self, from: data)) ?? []
     }
 
+    private func analysisURL(for url: URL) -> URL { url.appendingPathExtension("analysis.json") }
+
+    private func loadObservations(for url: URL) -> [Observation] {
+        guard let data = try? Data(contentsOf: analysisURL(for: url)) else { return [] }
+        return (try? JSONDecoder().decode([Observation].self, from: data)) ?? []
+    }
+
+    private func saveObservations() {
+        guard let sourceURL, let data = try? JSONEncoder().encode(observations) else { return }
+        try? data.write(to: analysisURL(for: sourceURL))
+    }
+
     private func saveKeyframes() {
         guard let sourceURL else { return }
         let enc = JSONEncoder()
@@ -276,6 +295,7 @@ extension PlayerModel {
         }
         keyframes = keys.sorted { $0.time < $1.time }
         autoFollow = true
+        keysEdited = true
         saveKeyframes()
     }
 
@@ -290,6 +310,7 @@ extension PlayerModel {
         guard let id = selectedKey else { return }
         keyframes.removeAll { $0.id == id }
         selectedKey = nil
+        keysEdited = true
         saveKeyframes()
     }
 
@@ -307,26 +328,18 @@ extension PlayerModel {
         job = flag
         analysisProgress = 0
         statusText = "Analysing…"
-        let duration = self.duration
-        let fov = viewState.fovDegrees
         let box = UncheckedBox((asset, tracks))
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let samples = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, progress: { p in
+                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, progress: { p in
                     Task { @MainActor in self?.analysisProgress = p }
                 }, cancel: flag)
-                let keys = PathBuilder.build(samples: samples, duration: duration, fov: fov)
                 await MainActor.run {
                     guard let self else { return }
                     self.analysisProgress = nil
-                    if keys.isEmpty {
-                        self.statusText = "No subject found."
-                    } else {
-                        self.keyframes = keys
-                        self.autoFollow = true
-                        self.saveKeyframes()
-                        self.statusText = "Found \(samples.count) observations → \(keys.count) keyframes."
-                    }
+                    self.observations = found
+                    self.saveObservations()
+                    self.buildPath()
                 }
             } catch {
                 await MainActor.run {
@@ -337,18 +350,47 @@ extension PlayerModel {
         }
     }
 
+    /// Replaces the keyframes with a path generated from the stored observations in the chosen style.
+    func buildPath() {
+        let keys = style.keyframes(from: observations, duration: duration, fov: 90)
+        guard !keys.isEmpty else { statusText = "Nothing found to build a path from."; return }
+        keyframes = keys
+        selectedKey = nil
+        keysEdited = false
+        autoFollow = true
+        saveKeyframes()
+        statusText = "\(style.rawValue): \(keys.count) keyframes."
+    }
+
+    /// Switching style regenerates the path straight away, unless that would discard manual edits.
+    func styleChanged() {
+        guard !observations.isEmpty else { return }
+        if keysEdited {
+            statusText = "Press Build path to apply \"\(style.rawValue)\" (replaces your keyframes)."
+        } else {
+            buildPath()
+        }
+    }
+
     func cancelJob() { job?.set() }
 
     /// Headless end-to-end run for testing: analyse, then export (CC360_BATCH=out.mp4).
     func runBatch(_ out: URL) async {
         let started = Date()
+        if ProcessInfo.processInfo.environment["CC360_STYLE"] == "scenery" { style = .scenery }
         analyze()
         while analysisProgress != nil {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             print(String(format: "analysis %.0f%% (%.0fs)", (analysisProgress ?? 1) * 100, Date().timeIntervalSince(started))); fflush(stdout)
         }
         print("analysis done: \(statusText ?? "?")"); fflush(stdout)
-        if let k = keyframes.first { print("first key: t=\(k.time) yaw=\(k.yaw * 180 / .pi)° pitch=\(k.pitch * 180 / .pi)°") }
+        for st in PathStyle.allCases {
+            let keys = st.keyframes(from: observations, duration: duration, fov: 90)
+            print("style \(st.rawValue): \(keys.count) keyframes")
+        }
+        for k in keyframes.prefix(40) {
+            print(String(format: "  t=%5.1f yaw=%5.0f° pitch=%4.0f° fov=%3.0f", k.time, Double(k.yaw) * 180 / .pi, Double(k.pitch) * 180 / .pi, k.fov))
+        }
         let exportStart = Date()
         export(preset: Exporter.Preset.all[0], to: out)
         while exportProgress != nil {

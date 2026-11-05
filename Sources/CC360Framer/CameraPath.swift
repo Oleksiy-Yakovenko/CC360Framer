@@ -6,6 +6,7 @@ struct Sample: Codable {
     var yaw: Float
     var pitch: Float
     var weight: Float
+    var fov: Float?       // nil = use the builder's default
 }
 
 struct Keyframe: Codable, Identifiable, Equatable {
@@ -61,40 +62,53 @@ struct CameraPath {
     }
 }
 
-/// Turns raw per-frame subject observations into a smooth, sparse set of editable keyframes.
+/// Turns per-time camera targets into a smooth, sparse set of editable keyframes.
 enum PathBuilder {
-    static func build(samples: [Sample], duration: Double, fov: Float = 90) -> [Keyframe] {
+    struct Params {
+        var sigma: Float            // gaussian smoothing, in 0.2 s grid steps
+        var medianRadius: Int       // outlier rejection window radius
+        var maxYawSpeed: Float      // rad/s
+        var maxPitchSpeed: Float    // rad/s
+        var tolerance: Float = 1.5 * .pi / 180   // keyframe decimation error
+
+        static let follow = Params(sigma: 6, medianRadius: 2, maxYawSpeed: 100 * .pi / 180, maxPitchSpeed: 60 * .pi / 180)
+        /// Shorter shots with deliberate pans: less smoothing, gentler maximum pan speed.
+        static let scenery = Params(sigma: 3, medianRadius: 1, maxYawSpeed: 70 * .pi / 180, maxPitchSpeed: 40 * .pi / 180)
+    }
+
+    static func build(samples: [Sample], duration: Double, fov: Float = 90, params: Params = .follow) -> [Keyframe] {
         let dt = 0.2
         let n = max(Int(duration / dt) + 1, 2)
         // Resample to a uniform grid; hold the last observation through gaps.
-        var yaw = [Float?](repeating: nil, count: n), pitch = [Float?](repeating: nil, count: n)
+        var yaw = [Float?](repeating: nil, count: n), pitch = [Float?](repeating: nil, count: n), zoom = [Float?](repeating: nil, count: n)
         for s in samples {
             let i = min(max(Int((s.t / dt).rounded()), 0), n - 1)
-            yaw[i] = s.yaw; pitch[i] = s.pitch
+            yaw[i] = s.yaw; pitch[i] = s.pitch; zoom[i] = s.fov ?? fov
         }
         guard yaw.contains(where: { $0 != nil }) else { return [] }
-        var ry = [Float](repeating: 0, count: n), rp = [Float](repeating: 0, count: n)
-        var lastY: Float?, lastP: Float?
+        var ry = [Float](repeating: 0, count: n), rp = [Float](repeating: 0, count: n), rf = [Float](repeating: fov, count: n)
+        var lastY: Float?, lastP: Float?, lastF: Float = fov
         for i in 0..<n {
-            if let y = yaw[i] { lastY = y; lastP = pitch[i] }
-            if let y = lastY { ry[i] = y; rp[i] = lastP! } else { ry[i] = .nan }
+            if let y = yaw[i] { lastY = y; lastP = pitch[i]; lastF = zoom[i] ?? fov }
+            if let y = lastY { ry[i] = y; rp[i] = lastP!; rf[i] = lastF } else { ry[i] = .nan }
         }
         if let firstIdx = ry.firstIndex(where: { !$0.isNaN }) {
-            for i in 0..<firstIdx { ry[i] = ry[firstIdx]; rp[i] = rp[firstIdx] }
+            for i in 0..<firstIdx { ry[i] = ry[firstIdx]; rp[i] = rp[firstIdx]; rf[i] = rf[firstIdx] }
         }
         // Unwrap yaw so smoothing does not average across the ±pi seam.
         for i in 1..<n { ry[i] = ry[i - 1] + wrapAngle(ry[i] - ry[i - 1]) }
 
-        ry = smooth(median(ry, radius: 2), sigma: 6)
-        rp = smooth(median(rp, radius: 2), sigma: 6)
-        ry = limitSpeed(ry, maxStep: 100 * .pi / 180 * Float(dt))
-        rp = limitSpeed(rp, maxStep: 60 * .pi / 180 * Float(dt))
+        ry = smooth(median(ry, radius: params.medianRadius), sigma: params.sigma)
+        rp = smooth(median(rp, radius: params.medianRadius), sigma: params.sigma)
+        rf = smooth(rf, sigma: params.sigma)
+        ry = limitSpeed(ry, maxStep: params.maxYawSpeed * Float(dt))
+        rp = limitSpeed(rp, maxStep: params.maxPitchSpeed * Float(dt))
 
-        // Keep only the points needed to reproduce the curve within ~1.5°.
+        // Keep only the points needed to reproduce the curve within the tolerance.
         var keep = Set([0, n - 1])
-        decimate(ry, rp, lo: 0, hi: n - 1, tol: 1.5 * .pi / 180, keep: &keep)
+        decimate(ry, rp, rf, lo: 0, hi: n - 1, tol: params.tolerance, keep: &keep)
         return keep.sorted().map {
-            Keyframe(time: Double($0) * dt, yaw: wrapAngle(ry[$0]), pitch: rp[$0], fov: fov)
+            Keyframe(time: Double($0) * dt, yaw: wrapAngle(ry[$0]), pitch: rp[$0], fov: rf[$0])
         }
     }
 
@@ -124,17 +138,21 @@ enum PathBuilder {
         return o
     }
 
-    private static func decimate(_ y: [Float], _ p: [Float], lo: Int, hi: Int, tol: Float, keep: inout Set<Int>) {
+    /// Recursive keyframe reduction; field of view error counts at half weight (3° of fov ≈ 1.5° of aim).
+    private static func decimate(_ y: [Float], _ p: [Float], _ f: [Float], lo: Int, hi: Int, tol: Float, keep: inout Set<Int>) {
         guard hi - lo > 1 else { return }
         var worst = 0, worstErr: Float = 0
         for i in (lo + 1)..<hi {
             let u = Float(i - lo) / Float(hi - lo)
-            let e = max(abs(y[i] - (y[lo] + u * (y[hi] - y[lo]))), abs(p[i] - (p[lo] + u * (p[hi] - p[lo]))))
+            let ey = abs(y[i] - (y[lo] + u * (y[hi] - y[lo])))
+            let ep = abs(p[i] - (p[lo] + u * (p[hi] - p[lo])))
+            let ef = abs(f[i] - (f[lo] + u * (f[hi] - f[lo]))) * .pi / 360
+            let e = max(ey, ep, ef)
             if e > worstErr { worstErr = e; worst = i }
         }
         guard worstErr > tol else { return }
         keep.insert(worst)
-        decimate(y, p, lo: lo, hi: worst, tol: tol, keep: &keep)
-        decimate(y, p, lo: worst, hi: hi, tol: tol, keep: &keep)
+        decimate(y, p, f, lo: lo, hi: worst, tol: tol, keep: &keep)
+        decimate(y, p, f, lo: worst, hi: hi, tol: tol, keep: &keep)
     }
 }

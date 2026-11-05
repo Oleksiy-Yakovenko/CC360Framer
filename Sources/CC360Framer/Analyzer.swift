@@ -10,9 +10,22 @@ final class CancelFlag: @unchecked Sendable {
     func set() { lock.lock(); value = true; lock.unlock() }
 }
 
-/// Finds the subject to follow. Decodes both lens tracks at low resolution, projects eight
-/// views around the horizon for every Nth frame, runs Vision person detection on each, and
-/// picks one subject per sample (large and close to the previous target wins).
+/// A direction in the scene with a relevance score.
+struct Candidate: Codable {
+    var yaw: Float
+    var pitch: Float
+    var score: Float
+}
+
+/// Raw detections at one point in time; path styles decide what to do with them.
+struct Observation: Codable {
+    var t: Double
+    var people: [Candidate]      // person detections, all views
+    var salient: [Candidate]     // salient objects in the side views (no forward/back views)
+}
+
+/// Decodes both lens tracks at low resolution, projects eight views around the horizon for
+/// every Nth frame, and records person detections plus salient objects on the sides.
 enum Analyzer {
     struct Failure: LocalizedError { let errorDescription: String? }
 
@@ -22,7 +35,7 @@ enum Analyzer {
 
     /// `step`: analyse every Nth decoded frame (6 ≈ 5 Hz at 30 fps).
     static func run(asset: AVAsset, videoTracks: [AVAssetTrack], step: Int = 6,
-                    progress: @escaping (Double) -> Void, cancel: CancelFlag) throws -> [Sample] {
+                    progress: @escaping (Double) -> Void, cancel: CancelFlag) throws -> [Observation] {
         guard videoTracks.count == 2, let device = MTLCreateSystemDefaultDevice() else {
             throw Failure(errorDescription: "Analysis needs a two-track 360 file.")
         }
@@ -50,8 +63,7 @@ enum Analyzer {
         }
         _ = viewCV
 
-        var samples: [Sample] = []
-        var previous: (yaw: Float, pitch: Float)?
+        var observations: [Observation] = []
         var index = 0
         let duration = max(asset.duration.seconds, 0.001)
         while let a = outs[0].copyNextSampleBuffer(), let b = outs[1].copyNextSampleBuffer() {
@@ -62,29 +74,35 @@ enum Analyzer {
                   renderer.setStacked(pa, pb) else { continue }
             let t = CMSampleBufferGetPresentationTimeStamp(a).seconds
 
-            var candidates: [(yaw: Float, pitch: Float, score: Float)] = []
+            var obs = Observation(t: t, people: [], salient: [])
             for v in 0..<viewCount {
                 let viewYaw = Float(v) * 2 * .pi / Float(viewCount)
                 renderer.renderSync(to: viewTexture, yaw: viewYaw, pitch: 0, fov: viewFov)
-                let request = VNDetectHumanRectanglesRequest()
-                try? VNImageRequestHandler(cvPixelBuffer: viewBuffer, options: [:]).perform([request])
-                for o in request.results ?? [] {
-                    let box = o.boundingBox   // normalised, origin bottom-left
-                    let dir = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
+                let handler = VNImageRequestHandler(cvPixelBuffer: viewBuffer, options: [:])
+                let people = VNDetectHumanRectanglesRequest()
+                // Views straight ahead (0) and behind (4) are covered by the forward shot and the rider.
+                let sideView = v != 0 && v != viewCount / 2
+                let objects = VNGenerateObjectnessBasedSaliencyImageRequest()
+                try? handler.perform(sideView ? [people, objects] : [people])
+                for o in people.results ?? [] {
                     // People cut by the view edge are seen better in the neighbouring view.
-                    let edge = min(box.minX, 1 - box.maxX)
-                    let area = Float(box.width * box.height) * Float(o.confidence) * (edge < 0.02 ? 0.5 : 1)
-                    candidates.append((dir.yaw, dir.pitch, area))
+                    let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
+                    let area = Float(o.boundingBox.width * o.boundingBox.height) * Float(o.confidence) * (edge < 0.02 ? 0.5 : 1)
+                    obs.people.append(candidate(o.boundingBox, viewYaw: viewYaw, score: area))
+                }
+                for o in objects.results?.first?.salientObjects ?? [] {
+                    // Prefer mid-sized objects: tiny ones are noise, frame-filling ones are just the surroundings.
+                    let area = Float(o.boundingBox.width * o.boundingBox.height)
+                    let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
+                    let score = Float(o.confidence) * min(area * 4, 1) * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
+                    obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score))
                 }
             }
-            if let best = pick(candidates, previous: previous) {
-                previous = (best.yaw, best.pitch)
-                samples.append(Sample(t: t, yaw: best.yaw, pitch: best.pitch, weight: best.score))
-            }
+            observations.append(obs)
             progress(min(t / duration, 1))
         }
         if reader.status == .failed { throw reader.error ?? Failure(errorDescription: "Decoding failed.") }
-        return samples
+        return observations
     }
 
     /// Direction of a point in a rectilinear view (aspect 1) looking at `viewYaw`, pitch 0.
@@ -97,15 +115,8 @@ enum Analyzer {
         return (atan2(x, z), asin(max(-1, min(1, d.y))))
     }
 
-    private static func pick(_ c: [(yaw: Float, pitch: Float, score: Float)],
-                             previous: (yaw: Float, pitch: Float)?) -> (yaw: Float, pitch: Float, score: Float)? {
-        c.max { weight($0, previous) < weight($1, previous) }
-    }
-
-    private static func weight(_ c: (yaw: Float, pitch: Float, score: Float), _ prev: (yaw: Float, pitch: Float)?) -> Float {
-        guard let prev else { return c.score }
-        let dist = abs(wrapAngle(c.yaw - prev.yaw)) + abs(c.pitch - prev.pitch)
-        let sigma: Float = 40 * .pi / 180
-        return c.score * (1 + 2 * exp(-dist * dist / (2 * sigma * sigma)))
+    private static func candidate(_ box: CGRect, viewYaw: Float, score: Float) -> Candidate {
+        let d = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
+        return Candidate(yaw: d.yaw, pitch: d.pitch, score: score)
     }
 }

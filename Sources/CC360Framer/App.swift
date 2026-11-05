@@ -74,11 +74,17 @@ struct ContentView: View {
                 Toggle("Auto", isOn: Binding(get: { model.autoFollow }, set: { model.autoFollow = $0 && !model.keyframes.isEmpty }))
                     .toggleStyle(.button).disabled(model.keyframes.isEmpty)
                     .help("Follow the camera path")
+                Picker("", selection: Binding(get: { model.style }, set: { model.style = $0; model.styleChanged() })) {
+                    ForEach(PathStyle.allCases) { Text($0.rawValue).tag($0) }
+                }.labelsHidden().frame(width: 150).help("How the camera path is generated")
                 if let p = model.analysisProgress {
                     ProgressView(value: p).frame(width: 90)
                     Button("Cancel") { model.cancelJob() }
+                } else if model.observations.isEmpty {
+                    Button("Analyse") { model.analyze() }.help("Detect people and objects, then build a camera path")
                 } else {
-                    Button("Analyse") { model.analyze() }.help("Find the subject and build a camera path")
+                    Button("Build path") { model.buildPath() }.help("Regenerate the path in this style (replaces keyframes)")
+                    Button("Re-analyse") { model.analyze() }
                 }
                 Button("Set key") { model.setKey() }.keyboardShortcut("k", modifiers: [])
                     .help("Keyframe the current view at the playhead (K)")
