@@ -21,17 +21,24 @@ final class KeyframeViewController: ModelViewController {
         statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [previousButton, nextButton, setButton, deleteButton, clearButton, statusLabel])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(row)
+        // Buttons pinned to the leading inset (same as the transport row); the status label fills the rest.
+        let buttons = NSStackView(views: [previousButton, nextButton, setButton, deleteButton, clearButton])
+        buttons.orientation = .horizontal
+        buttons.alignment = .centerY
+        buttons.spacing = 8
+        buttons.setContentHuggingPriority(.required, for: .horizontal)
+        buttons.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for v in [buttons, statusLabel] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            row.topAnchor.constraint(equalTo: view.topAnchor, constant: 4),
-            row.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            buttons.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            buttons.topAnchor.constraint(equalTo: view.topAnchor, constant: 4),
+            buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            statusLabel.leadingAnchor.constraint(equalTo: buttons.trailingAnchor, constant: 12),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -10),
+            statusLabel.centerYAnchor.constraint(equalTo: buttons.centerYAnchor),
         ])
     }
 
