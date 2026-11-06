@@ -47,18 +47,23 @@ final class CenterViewController: NSViewController {
             v.setContentHuggingPriority(.required, for: .vertical)
             v.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        // Container that pins the stack to its real edges (not the safe area), so the preview runs underneath the
-        // transparent unified toolbar instead of leaving window-gray strip above it. Only the player area (and the
-        // strip under the toolbar) is black; the controls below keep the window background.
+        // The stack sits in the safe area, so the player starts right below the unified toolbar (which keeps its normal
+        // window material). The black backdrop covers only the player; the controls below keep the window background.
         let container = NSView()
         let backdrop = NSView()
         backdrop.wantsLayer = true
         backdrop.layer?.backgroundColor = NSColor.black.cgColor
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(backdrop)
-        Kit.pin(stack, to: container)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        let safe = container.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            backdrop.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.topAnchor.constraint(equalTo: safe.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            backdrop.topAnchor.constraint(equalTo: safe.topAnchor),
             backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             backdrop.bottomAnchor.constraint(equalTo: player.view.bottomAnchor),
