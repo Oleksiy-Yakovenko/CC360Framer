@@ -5,6 +5,7 @@ import Foundation
 struct ProjectSidecar: Codable, Equatable {
     var locationStyle: LocationCardStyle?
     var locationPlacement: OverlayPlacement?
+    var exportSettings: ExportSettings?
 
     static let kind = "project"
 

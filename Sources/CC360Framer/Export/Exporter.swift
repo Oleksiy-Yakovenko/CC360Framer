@@ -2,27 +2,15 @@ import AVFoundation
 import Metal
 
 /// Renders the camera path into a flat video: both lens tracks are decoded through the stacking
-/// compositor, reprojected with the same Metal shader as the preview, and encoded as HEVC.
+/// compositor, reprojected with the same Metal shader as the preview, and encoded as HEVC or H.264 (see `ExportSettings`).
 enum Exporter {
     struct Failure: LocalizedError { let errorDescription: String? }
-
-    struct Preset: Hashable {
-        let name: String
-        let width: Int
-        let height: Int
-        var bitRate: Int { width * height > 3_000_000 ? 50_000_000 : 20_000_000 }
-        static let all = [
-            Preset(name: "1080p 16:9", width: 1920, height: 1080),
-            Preset(name: "4K 16:9", width: 3840, height: 2160),
-            Preset(name: "1080×1920 9:16", width: 1080, height: 1920),
-        ]
-    }
 
     /// Blocking; call from a background thread.
     static func run(overlay: CGImage?, placement: OverlayPlacement, composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, fallback: (yaw: Float, pitch: Float, fov: Float),
-                    stabilizer: Stabilizer?, preset: Preset, to url: URL,
+                    stabilizer: Stabilizer?, settings: ExportSettings, to url: URL,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure(errorDescription: "No Metal device.") }
         try? FileManager.default.removeItem(at: url)
@@ -54,15 +42,13 @@ enum Exporter {
             aout = o
         }
 
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let vin = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: preset.width, AVVideoHeightKey: preset.height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: preset.bitRate],
-        ])
+        let writer = try AVAssetWriter(outputURL: url, fileType: settings.container.fileType)
+        let size = settings.outputSize
+        let vin = AVAssetWriterInput(mediaType: .video, outputSettings: settings.videoOutputSettings)
         vin.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vin, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: preset.width, kCVPixelBufferHeightKey as String: preset.height,
+            kCVPixelBufferWidthKey as String: size.width, kCVPixelBufferHeightKey as String: size.height,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
         ])
@@ -70,7 +56,7 @@ enum Exporter {
         var ain: AVAssetWriterInput?
         if aout != nil {
             let i = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000])
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: ExportSettings.audioBitRate])
             i.expectsMediaDataInRealTime = false
             writer.add(i)
             ain = i

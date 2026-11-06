@@ -16,38 +16,34 @@ final class RightSidebarViewController: ModelViewController {
     }
 }
 
-/// Export preset and progress.
+/// Export format and size, and progress.
 final class ExportTabViewController: ModelViewController {
-    private var presetPopup = NSPopUpButton()
+    private let settingsView = ExportSettingsView()
     private let progressBar = NSProgressIndicator()
 
     override func loadView() {
         view = NSView()
-        presetPopup = Kit.popup(Exporter.Preset.all.map(\.name), tip: "Resolution and format of the exported video",
-                                target: self, action: #selector(presetChosen))
+        settingsView.onChange = { [weak self] in self?.model.exportSettings = $0 }
         progressBar.style = .bar
         progressBar.isIndeterminate = false
         progressBar.minValue = 0
         progressBar.maxValue = 1
         progressBar.isHidden = true
+        settingsView.identifier = Kit.fullWidthID
         Kit.sidebarStack(in: view, [
-            Kit.title("Export preset", tip: "Resolution and format used by the Export button in the toolbar."),
-            presetPopup,
+            Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
+            settingsView,
             progressBar,
         ], topAnchor: view.topAnchor)
     }
 
     override func refresh() {
-        presetPopup.selectItem(at: Exporter.Preset.all.firstIndex(of: model.exportPreset) ?? 0)
+        settingsView.settings = model.exportSettings
         if let p = model.exportProgress {
             progressBar.doubleValue = p
             progressBar.toolTip = "Exporting… \(Int(p * 100))%"
         }
         progressBar.isHidden = model.exportProgress == nil
-    }
-
-    @objc private func presetChosen() {
-        model.exportPreset = Exporter.Preset.all[presetPopup.indexOfSelectedItem]
     }
 }
 

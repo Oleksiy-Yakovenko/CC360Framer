@@ -67,7 +67,14 @@ final class PlayerModel: ObservableObject {
         didSet { UserDefaults.standard.set(style.rawValue, forKey: "pathStyle") }
     }
     @Published var stabilization: StabilizeMode = .smooth
-    @Published var exportPreset = Exporter.Preset.all[0]
+    /// Export format, size and rate control. App-wide default in UserDefaults, per file in the project sidecar.
+    @Published var exportSettings = ExportSettings.loadDefaults() {
+        didSet {
+            guard exportSettings != oldValue, !loadingProject else { return }
+            exportSettings.saveDefaults()
+            saveProject()
+        }
+    }
     private var telemetry: Telemetry?
     /// Location title card for the first seconds of the clip; nil when the file has no GPS lock.
     private(set) var overlayImage: CGImage?
@@ -121,6 +128,7 @@ final class PlayerModel: ObservableObject {
         let proj = ProjectSidecar.load(for: url)
         loadingProject = true
         cardStyle = proj.locationStyle ?? LocationCardStyle()
+        exportSettings = proj.exportSettings ?? ExportSettings.loadDefaults()
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
             ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft
@@ -130,7 +138,7 @@ final class PlayerModel: ObservableObject {
 
     func saveProject() {
         guard !loadingProject, let sourceURL else { return }
-        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement).save(for: sourceURL)
+        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings).save(for: sourceURL)
     }
 
     var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }
@@ -607,7 +615,14 @@ extension PlayerModel {
             print(String(format: "  t=%5.1f yaw=%5.0f° pitch=%4.0f° fov=%3.0f", k.time, Double(k.yaw) * 180 / .pi, Double(k.pitch) * 180 / .pi, k.fov))
         }
         let exportStart = Date()
-        export(preset: Exporter.Preset.all[0], to: out)
+        if let json = ProcessInfo.processInfo.environment["CC360_EXPORT_SETTINGS"], let s = try? JSONDecoder().decode(ExportSettings.self, from: Data(json.utf8)) {
+            loadingProject = true   // a test override: do not save it as the default
+            exportSettings = s
+            loadingProject = false
+        }
+        let o = exportSettings.outputSize
+        print("export settings: \(exportSettings.container.rawValue) \(exportSettings.codec.rawValue) \(o.width)x\(o.height)"); fflush(stdout)
+        export(to: out)
         while exportProgress != nil {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             print(String(format: "export %.0f%% (%.0fs)", (exportProgress ?? 1) * 100, Date().timeIntervalSince(exportStart))); fflush(stdout)
@@ -616,7 +631,8 @@ extension PlayerModel {
         exit(0)
     }
 
-    func export(preset: Exporter.Preset, to url: URL) {
+    func export(to url: URL) {
+        let settings = exportSettings
         guard let comp = composition, let vc = videoComposition, exportProgress == nil else { return }
         let flag = CancelFlag()
         job = flag
@@ -634,7 +650,7 @@ extension PlayerModel {
                 await pending?.value   // make sure the location lookup has finished
                 let overlay = await MainActor.run { self?.overlayImage }
                 try Exporter.run(overlay: overlay, placement: placement, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
-                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, stabilizer: box.value.3, preset: preset, to: url,
+                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, stabilizer: box.value.3, settings: settings, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
             } catch {

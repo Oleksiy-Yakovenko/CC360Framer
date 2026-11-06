@@ -121,9 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let model = current?.model else { return }
         if model.exportProgress != nil { model.cancelJob(); return }
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = (model.title as NSString).deletingPathExtension + "-reframed.mp4"
-        if panel.runModal() == .OK, let url = panel.url { model.export(preset: model.exportPreset, to: url) }
+        let container = model.exportSettings.container
+        panel.allowedContentTypes = [container == .mp4 ? .mpeg4Movie : .quickTimeMovie]
+        panel.nameFieldStringValue = (model.title as NSString).deletingPathExtension + "-reframed.\(container.fileExtension)"
+        if panel.runModal() == .OK, let url = panel.url { model.export(to: url) }
     }
 
     @objc func toggleSidebar(_ sender: Any?) { current?.main.toggleSidebar(sender) }
