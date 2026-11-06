@@ -18,4 +18,7 @@ if args.first == "--stab-test" {
 if args.first == "--snapshot" {
     exit(Snapshot.run(args: Array(args.dropFirst())))
 }
+if args.first == "--batch-run" {
+    BatchCLI.run(args: Array(args.dropFirst()))
+}
 CC360FramerApp.main()
