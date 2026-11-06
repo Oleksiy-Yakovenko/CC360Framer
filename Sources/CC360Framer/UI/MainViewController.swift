@@ -75,7 +75,6 @@ final class CenterViewController: NSViewController {
 private extension NSToolbarItem.Identifier {
     static let appTitle = NSToolbarItem.Identifier("appTitle")
     static let export = NSToolbarItem.Identifier("export")
-    static let inspectorSeparator = NSToolbarItem.Identifier("inspectorSeparator")
     static let inspector = NSToolbarItem.Identifier("inspector")
 }
 
@@ -97,9 +96,12 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         left.maximumThickness = 400
         let middle = NSSplitViewItem(viewController: center)
         middle.minimumThickness = 420
+        middle.titlebarSeparatorStyle = .line   // line under the toolbar over the preview
+        left.titlebarSeparatorStyle = .automatic
         inspectorItem = NSSplitViewItem(inspectorWithViewController: RightSidebarViewController(model: model))
         inspectorItem.minimumThickness = 280
         inspectorItem.maximumThickness = 360
+        inspectorItem.titlebarSeparatorStyle = .automatic
         super.init(nibName: nil, bundle: nil)
         let split = DropSplitView()
         split.isVertical = true
@@ -141,7 +143,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The separators follow the split view dividers, so the items sit above the pane they belong to.
-        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .flexibleSpace, .inspectorSeparator, .flexibleSpace, .inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -160,8 +162,6 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
             exportItem = item
             updateToolbar()
             return item
-        case .inspectorSeparator:
-            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitView, dividerIndex: 1)
         case .inspector:
             return button(id, "Inspector", "sidebar.right", "Show or hide the right sidebar", delegate, #selector(AppDelegate.toggleInspector))
         default:
