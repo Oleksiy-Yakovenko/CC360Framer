@@ -45,6 +45,7 @@ struct Uniforms {
     var cfg: SIMD4<Float>
     var mode: Float
     var yuv: Float               // 1 when the frame is biplanar YCbCr (full range, BT.709)
+    var mixB: Float = 0          // weight of the incoming frame of a preview dissolve (second buffer), 0 = single frame
     var right: SIMD4<Float>      // virtual camera axes in body coordinates (w unused)
     var up: SIMD4<Float>
     var forward: SIMD4<Float>

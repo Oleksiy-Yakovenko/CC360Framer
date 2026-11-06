@@ -68,3 +68,5 @@ Things unit tests cannot cover are still verified by the CLI tools in `README.md
 - Analysis/paths: `CC360_BATCH` with a scratch copy of the video symlink and cached `.analysis.json` (never write into the user's footage folder); check keyframe timeline (Follow: constant fov 70, mostly pointing at the rider; Scenery: fov 55-70, 0-2 rider shots) and extract export frames at keyframe times.
 - Telemetry: `--telemetry` should report one sample per video frame.
 - Test footage is large and untracked: `GS010074.360` (project folder), `GS010068.360` (under `~/Movies/GoPro/`).
+
+- `PlayerModel+Dissolve.swift`: preview-with-cuts crossfade. Spare `AVPlayer` + `AVPlayerItemVideoOutput` is seeked/prerolled ~2 s before a `TimeMap` overlap window (prepared), started on a host-clock time at arm, blended by the Renderer with the export's mix ramp, then the players swap roles. Uses `viewState.frameTime`, never `player.currentTime()`, in the display-link tick.

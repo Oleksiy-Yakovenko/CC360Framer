@@ -131,6 +131,49 @@ struct TimeMap: Equatable {
         return segments.first(where: { $0.sourceStart > s })?.sourceStart ?? duration
     }
 
+    /// One dissolve seen from the preview, in SOURCE time. The outgoing segment keeps playing from `outStart` to
+    /// `outEnd` (its end) while the incoming one plays from `inStart` for `length`; the preview player of the
+    /// incoming segment then takes over at `landing`.
+    struct Overlap: Equatable {
+        /// Index of the outgoing segment; the incoming one is `segment + 1`.
+        var segment: Int
+        var outStart: Double
+        var outEnd: Double
+        var inStart: Double
+        var length: Double
+
+        /// Where the main player continues after the dissolve (the incoming time at `outEnd`).
+        var landing: Double { inStart + length }
+        /// Dissolve weight of the incoming frame (0...1, linear like the export) for an outgoing source time.
+        func mix(atOutgoing t: Double) -> Double { max(0, min(1, (t - outStart) / length)) }
+        /// Source time of the incoming frame shown together with the outgoing frame at `t`.
+        func incomingTime(forOutgoing t: Double) -> Double { inStart + max(0, min(length, t - outStart)) }
+        /// Source time of the outgoing frame shown together with the incoming frame at `t`.
+        func outgoingTime(forIncoming t: Double) -> Double { outStart + max(0, min(length, t - inStart)) }
+        /// True while the outgoing playhead `t` is inside the dissolve (its end excluded: there the incoming player takes over).
+        func contains(outgoing t: Double) -> Bool { t >= outStart && t < outEnd }
+    }
+
+    /// The dissolves of this map in source order (cuts with an effective crossfade of 0 have none).
+    var overlaps: [Overlap] {
+        fades.enumerated().compactMap { i, f in
+            guard f > 0 else { return nil }
+            return Overlap(segment: i, outStart: segments[i].sourceEnd - f, outEnd: segments[i].sourceEnd, inStart: segments[i + 1].sourceStart, length: f)
+        }
+    }
+
+    /// The dissolve whose outgoing part contains source time `t`, if any.
+    func overlap(atOutgoingSource t: Double) -> Overlap? { overlaps.first { $0.contains(outgoing: t) } }
+
+    /// The first dissolve that starts after source time `t`.
+    func nextOverlap(after t: Double) -> Overlap? { overlaps.first { $0.outStart > t } }
+
+    /// Jumps the preview must make by seeking: cuts without a dissolve (hard cut, crossfade 0 or segments too short),
+    /// and the cut at the very end. Cuts with a dissolve are handled by the second player (`overlaps`).
+    var hardJumps: [(from: Double, to: Double)] {
+        jumpPoints.enumerated().filter { i, _ in !(i < fades.count && fades[i] > 0) }.map(\.element)
+    }
+
     /// Source start times of cuts that follow a kept segment (where the preview must jump).
     var jumpPoints: [(from: Double, to: Double)] {
         var pts: [(Double, Double)] = []

@@ -6,7 +6,7 @@ private let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
 
-struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; float yuv; float3 right; float3 up; float3 forward; };
+struct U { float yaw; float pitch; float tanHalfFov; float aspect; float4 cfg; float mode; float yuv; float mixB; float3 right; float3 up; float3 forward; };
 struct VOut { float4 pos [[position]]; float2 ndc; };
 
 vertex VOut vs(uint vid [[vertex_id]]) {
@@ -48,18 +48,18 @@ static float3 sampleStrip(constant U& u, texture2d<float> tex, texture2d<float> 
     return rgbAt(u, tex, texC, smp, float2(x3 / TW, py));
 }
 
-fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
-                   texture2d<float> tex [[texture(0)]], texture2d<float> texC [[texture(1)]], sampler smp [[sampler(0)]]) {
+// Colour of one source frame seen through camera `u`.
+static float3 shade(constant U& u, float2 ndcPos, texture2d<float> tex, texture2d<float> texC, sampler smp) {
     float3 d;
     if (u.mode < 0.5) {
-        d = normalize(float3(in.ndc.x * u.aspect * u.tanHalfFov, in.ndc.y * u.tanHalfFov, 1.0));
+        d = normalize(float3(ndcPos.x * u.aspect * u.tanHalfFov, ndcPos.y * u.tanHalfFov, 1.0));
         float cp = cos(u.pitch), sp = sin(u.pitch);
         d = float3(d.x, d.y * cp + d.z * sp, -d.y * sp + d.z * cp);
         float cy = cos(u.yaw), sy = sin(u.yaw);
         d = float3(d.x * cy + d.z * sy, d.y, -d.x * sy + d.z * cy);
     } else {
-        float lon = in.ndc.x * PI;
-        float lat = in.ndc.y * PI * 0.5;
+        float lon = ndcPos.x * PI;
+        float lat = ndcPos.y * PI * 0.5;
         d = float3(sin(lon) * cos(lat), sin(lat), cos(lon) * cos(lat));
     }
 
@@ -90,7 +90,17 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
         yOff = TH;
     }
     float y = clamp((0.5 - 0.5 * v) * TH, 0.5, TH - 0.5);
-    return float4(sampleStrip(u, tex, texC, smp, c, y, yOff), 1.0);
+    return sampleStrip(u, tex, texC, smp, c, y, yOff);
+}
+
+// u2 / tex2 / texC2: the incoming frame of a preview dissolve (own camera and stabiliser basis, rendered at its own
+// source time); u.mixB is its weight, 0 outside a dissolve (then it is never sampled).
+fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]], constant U& u2 [[buffer(1)]],
+                   texture2d<float> tex [[texture(0)]], texture2d<float> texC [[texture(1)]],
+                   texture2d<float> tex2 [[texture(2)]], texture2d<float> texC2 [[texture(3)]], sampler smp [[sampler(0)]]) {
+    float3 a = shade(u, in.ndc, tex, texC, smp);
+    if (u.mixB > 0.0) a = mix(a, shade(u2, in.ndc, tex2, texC2, smp), clamp(u.mixB, 0.0, 1.0));
+    return float4(a, 1.0);
 }
 """
 
@@ -165,6 +175,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var targetDebounce: DispatchWorkItem?
     static let targetDebounceSeconds = 0.15
     private let overlayLock = NSLock()
+    /// Preview dissolve: the incoming frame (second texture set), its source time and weight. Only `draw` sets these; the
+    /// export and snapshots never do, so their `mixB` stays 0 and the second set is never sampled.
+    var incomingSource: FrameSource?
+    private var textureB: MTLTexture?
+    private var chromaB: MTLTexture?
+    private var recentB: [CVMetalTexture] = []
+    private var incomingGeneration = -1
+    private(set) var incomingTime = 0.0
+    private var mixB: Float = 0
 
     init(device: MTLDevice, state: ViewState, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -212,7 +231,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         return (cvTex, t)
     }
 
-    func setFrame(_ pb: CVPixelBuffer) {
+    /// Metal textures for a frame: luma + CbCr for a YCbCr buffer, else one BGRA texture. `keep` must stay alive while the GPU uses them.
+    private func planes(of pb: CVPixelBuffer) -> (keep: [CVMetalTexture], y: MTLTexture, chroma: MTLTexture?)? {
         if CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
             func plane(_ i: Int, _ f: MTLPixelFormat) -> (CVMetalTexture, MTLTexture)? {
                 var cv: CVMetalTexture?
@@ -221,16 +241,36 @@ final class Renderer: NSObject, MTKViewDelegate {
                       let cv, let t = CVMetalTextureGetTexture(cv) else { return nil }
                 return (cv, t)
             }
-            guard let (cy, ty) = plane(0, .r8Unorm), let (cc, tc) = plane(1, .rg8Unorm) else { return }
-            recent += [cy, cc]
-            if recent.count > 8 { recent.removeFirst(2) }   // keep in-flight frames alive
-            texture = ty; chroma = tc
-            return
+            guard let (cy, ty) = plane(0, .r8Unorm), let (cc, tc) = plane(1, .rg8Unorm) else { return nil }
+            return ([cy, cc], ty, tc)
         }
-        guard let (cvTex, t) = makeTexture(from: pb) else { return }
-        recent.append(cvTex)
-        if recent.count > 4 { recent.removeFirst() }
-        texture = t; chroma = nil
+        guard let (cvTex, t) = makeTexture(from: pb) else { return nil }
+        return ([cvTex], t, nil)
+    }
+
+    func setFrame(_ pb: CVPixelBuffer) {
+        guard let p = planes(of: pb) else { return }
+        recent += p.keep
+        if recent.count > 4 * p.keep.count { recent.removeFirst(p.keep.count) }   // keep in-flight frames alive
+        texture = p.y; chroma = p.chroma
+    }
+
+    private func setIncomingFrame(_ pb: CVPixelBuffer) {
+        guard let p = planes(of: pb) else { return }
+        recentB += p.keep
+        if recentB.count > 4 * p.keep.count { recentB.removeFirst(p.keep.count) }
+        textureB = p.y; chromaB = p.chroma
+    }
+
+    private func clearIncoming() { textureB = nil; chromaB = nil; recentB = [] }
+
+    /// The incoming player has become the main one: its latest frame is now the current picture.
+    private func promoteIncoming(frameTimeSetter: (Double) -> Void) {
+        if let tb = textureB {
+            texture = tb; chroma = chromaB; recent = recentB
+            frameTimeSetter(incomingTime)
+        }
+        clearIncoming()
     }
 
     /// Overlay bitmaps (premultiplied BGRA, keyed as the plan refers to them) and the plan; textures of unchanged images are reused.
@@ -259,11 +299,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     /// Composites every overlay that is active at the frame's (source) time, in plan order, over the picture.
-    private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float, frame: (x: Float, y: Float, width: Float, height: Float)) {
+    private func drawOverlay(_ enc: MTLRenderCommandEncoder, at time: Double, targetWidth: Float, targetHeight: Float, frame: (x: Float, y: Float, width: Float, height: Float)) {
         overlayLock.lock()
         let plan = overlayPlan, textures = overlayTextures, built = overlayBuiltShort
         overlayLock.unlock()
-        for d in plan.draws(at: state.frameTime, builtShort: built) {
+        for d in plan.draws(at: time, builtShort: built) {
             guard let tex = textures[d.key]?.texture else { continue }
             let r = OverlayLayout.rect(texWidth: tex.width, texHeight: tex.height, targetWidth: targetWidth, targetHeight: targetHeight, frame: frame,
                                        placement: d.placement, size: d.size)
@@ -327,20 +367,37 @@ final class Renderer: NSObject, MTKViewDelegate {
             let r = ExportFrame.pixelRect(width: Double(size.width), height: Double(size.height), exportAspect: ea)
             frame = (Float(r.x), Float(r.y), Float(r.width), Float(r.height))
         }
+        var overlayTime = state.frameTime
         if let texture {
             let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
             var u = Uniforms(yaw: state.yaw, pitch: state.pitch,
                              tanHalfFov: tan(state.fovDegrees * .pi / 360) * fovScale, aspect: aspect,
                              cfg: state.cfg, mode: state.mode, yuv: chroma == nil ? 0 : 1,
                              right: SIMD4(b.right, 0), up: SIMD4(b.up, 0), forward: SIMD4(b.forward, 0))
+            var u2 = u
+            var texB = texture, chromaTex = chroma ?? texture
+            if mixB > 0, let tb = textureB {
+                // The incoming frame is rendered at ITS source time: camera path and stabiliser basis of that time.
+                let cam = incomingSource?.incomingCamera?(incomingTime) ?? (yaw: state.yaw, pitch: state.pitch, fov: state.fovDegrees)
+                let bb = state.stabilizer?.basis(at: incomingTime) ?? .identity
+                u2 = Uniforms(yaw: cam.yaw, pitch: cam.pitch, tanHalfFov: tan(cam.fov * .pi / 360) * fovScale, aspect: aspect,
+                              cfg: state.cfg, mode: state.mode, yuv: chromaB == nil ? 0 : 1,
+                              right: SIMD4(bb.right, 0), up: SIMD4(bb.up, 0), forward: SIMD4(bb.forward, 0))
+                u.mixB = mixB
+                texB = tb; chromaTex = chromaB ?? tb
+                if mixB >= 0.5 { overlayTime = incomingTime }   // overlays follow the outgoing frame until the cut point, then the incoming
+            }
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setFragmentBytes(&u2, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentTexture(texture, index: 0)
             enc.setFragmentTexture(chroma ?? texture, index: 1)
+            enc.setFragmentTexture(texB, index: 2)
+            enc.setFragmentTexture(chromaTex, index: 3)
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
-        drawOverlay(enc, targetWidth: Float(size.width), targetHeight: Float(size.height), frame: frame)
+        drawOverlay(enc, at: overlayTime, targetWidth: Float(size.width), targetHeight: Float(size.height), frame: frame)
         if let ea = guideAspect {
             let h = ExportFrame.halfExtent(previewAspect: Double(size.width / size.height), exportAspect: ea)
             var g: [Float] = [Float(h.x), Float(h.y), Float(size.width), Float(size.height)]
@@ -381,7 +438,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         var drawableWaited = 0.0
         defer { if Pacing.enabled { Pacing.timing(drawableWait: drawableWaited, body: CACurrentMediaTime() - began - drawableWaited) } }
         preDraw?()
-        if let (pb, time) = frameProvider?(targetHostTime > 0 ? targetHostTime : CACurrentMediaTime()) { setFrame(pb); state.frameTime = time }
+        let host = targetHostTime > 0 ? targetHostTime : CACurrentMediaTime()
+        if let src = incomingSource, src.takePromote() { promoteIncoming { self.state.frameTime = $0 } }
+        if let (pb, time) = frameProvider?(host) { setFrame(pb); state.frameTime = time }
+        mixB = 0
+        if let src = incomingSource {
+            let inc = src.incoming(at: host, outgoingTime: state.frameTime)
+            if inc.generation != incomingGeneration { incomingGeneration = inc.generation; clearIncoming() }
+            if let (pb, t) = inc.frame { setIncomingFrame(pb); incomingTime = t }
+            if inc.active, textureB != nil { mixB = Float(inc.mix) }
+        }
         let waitStart = CACurrentMediaTime()
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }

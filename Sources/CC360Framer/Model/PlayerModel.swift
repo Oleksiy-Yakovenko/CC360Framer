@@ -11,6 +11,17 @@ struct AudioOption: Identifiable {
 /// Hands decoded frames from the player item to the renderer.
 final class FrameSource {
     var output: AVPlayerItemVideoOutput?
+    // Preview dissolve (see PlayerModel+Dissolve): the incoming player's output while a dissolve window is armed. Written by
+    // the model and read by the renderer's draw, both on the main thread.
+    var incomingOutput: AVPlayerItemVideoOutput?
+    var overlap: TimeMap.Overlap?
+    /// Bumped whenever the armed window changes so the renderer drops the incoming frame of the previous one.
+    var generation = 0 { didSet { lastIncomingTime = nil } }
+    /// Source time of the newest incoming frame (drift check of the second player).
+    var lastIncomingTime: Double?
+    var promotePending = false
+    var incomingCamera: ((Double) -> (yaw: Float, pitch: Float, fov: Float))?
+    private var lastMixLog = 0.0
     private let debug = ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil
     private var count = 0
     private var lastReport = CACurrentMediaTime()
@@ -34,6 +45,41 @@ final class FrameSource {
             }
         }
         return pb.map { ($0, shown.isValid ? shown.seconds : t.seconds) }
+    }
+
+    struct Incoming {
+        var generation: Int
+        var active: Bool
+        var mix: Double
+        var frame: (CVPixelBuffer, Double)?
+    }
+
+    /// The incoming frame of an armed dissolve (new ones only) and the weight for the outgoing frame time `t`.
+    func incoming(at hostTime: CFTimeInterval, outgoingTime t: Double) -> Incoming {
+        guard let ov = overlap, let out = incomingOutput else { return Incoming(generation: generation, active: false, mix: 0, frame: nil) }
+        var frame: (CVPixelBuffer, Double)?
+        let it = out.itemTime(forHostTime: hostTime)
+        if out.hasNewPixelBuffer(forItemTime: it) {
+            var shown = CMTime.zero
+            if let pb = out.copyPixelBuffer(forItemTime: it, itemTimeForDisplay: &shown) {
+                frame = (pb, shown.isValid ? shown.seconds : it.seconds)
+                lastIncomingTime = frame?.1
+            }
+        }
+        let mix = ov.mix(atOutgoing: t)
+        if debug, mix > 0, mix < 1 || frame != nil {
+            let now = CACurrentMediaTime()
+            if now - lastMixLog >= 0.1 {
+                lastMixLog = now
+                print(String(format: "dissolve: mix %.2f  outgoing t=%.3f  incoming t=%@", mix, t, frame.map { String(format: "%.3f", $0.1) } ?? "-")); fflush(stdout)
+            }
+        }
+        return Incoming(generation: generation, active: true, mix: mix, frame: frame)
+    }
+
+    func takePromote() -> Bool {
+        defer { promotePending = false }
+        return promotePending
     }
 }
 
@@ -64,6 +110,7 @@ final class PlayerModel: ObservableObject {
         })
     var cutDragStart: CutSnapshot?
     var cutObserver: Any?
+    var cutObserverPlayer: AVPlayer?
     /// Keyframes and selection as one undoable unit.
     struct KeySnapshot: Equatable { var keys: [Keyframe]; var selected: UUID? }
     private(set) lazy var undo = SnapshotUndo<KeySnapshot>(
@@ -91,6 +138,7 @@ final class PlayerModel: ObservableObject {
             guard exportSettings != oldValue, !loadingProject else { return }
             exportSettings.saveDefaults()
             saveProject()
+            if exportSettings.crossfade != oldValue.crossfade { updateCutPreview() }   // the preview dissolve follows the export crossfade
         }
     }
     /// Replaces the fov of every keyframe (preview, export, batch) while enabled. Default in UserDefaults, per file in the project sidecar.
@@ -312,24 +360,30 @@ final class PlayerModel: ObservableObject {
     private var sourceURL: URL?
     private var sourceAsset: AVURLAsset?
     private var sourceVideoTracks: [AVAssetTrack] = []
-    private var videoComposition: AVVideoComposition?
+    var videoComposition: AVVideoComposition?
     private var job: CancelFlag?
 
     let frames = FrameSource()
     let viewState = ViewState()
-    private(set) var player = AVPlayer()
-    fileprivate var item: AVPlayerItem?
-    fileprivate var composition: AVMutableComposition?
+    /// The main player: plays the source timeline (the playhead). With a dissolve preview its role is swapped with the
+    /// spare player at the end of each dissolve (see `PlayerModel+Dissolve`).
+    var player = AVPlayer()
+    var item: AVPlayerItem?
+    var composition: AVMutableComposition?
     private var timeObserver: Any?
     private var endObserver: Any?
-    fileprivate var scrubbing = false
-    private var session: MediaSession?
+    /// Player the `timeObserver` and `cutObserver` were added to.
+    private var observedPlayer: AVPlayer?
+    var scrubbing = false
+    let dissolve = DissolveState()
+    private(set) var session: MediaSession?
 
     func open(_ url: URL) async {
         do {
             errorText = nil
             player.pause()
             isPlaying = false
+            dissolve.release(frames: frames)
             let session = try await MediaSession.open(url)
             let comp = session.composition
             let vc = session.videoComposition
@@ -411,30 +465,51 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    func cleanup() { session?.cleanup() }
+    func cleanup() {
+        dissolve.release(frames: frames)
+        session?.cleanup()
+    }
 
-    fileprivate func audioMix() -> AVAudioMix? {
+    func audioMix() -> AVAudioMix? {
         session?.audioMix(for: audioOptions)
     }
 
     func toggleAudio(_ id: CMPersistentTrackID) {
         guard let i = audioOptions.firstIndex(where: { $0.id == id }) else { return }
         audioOptions[i].enabled.toggle()
-        item?.audioMix = audioMix()
+        applyDissolveAudio()
     }
 
     private func installObservers(_ item: AVPlayerItem) {
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        removePlayerObservers()
+        observedPlayer = player
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self, !self.scrubbing else { return }
                 self.position = t.seconds
             }
         }
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.isPlaying = false }
         }
+    }
+
+    /// Detaches the time, cut and end observers from the main player (before its role changes).
+    func removePlayerObservers() {
+        if let timeObserver { observedPlayer?.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+        if let cutObserver { cutObserverPlayer?.removeTimeObserver(cutObserver) }
+        cutObserver = nil; cutObserverPlayer = nil
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        endObserver = nil
+        observedPlayer = nil
+    }
+
+    /// Rebinds the observers after the main player changed.
+    func rebindPlayerObservers() {
+        guard let item else { return }
+        installObservers(item)
+        updateCutPreview()
     }
 
     func togglePlay() {
@@ -494,6 +569,7 @@ extension PlayerModel {
 
     /// Called every draw: while following, the view tracks the camera path at the playhead.
     func applyPath() {
+        dissolveTick()
         if autoFollow {
             let cur = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
             let cam = path.sample(at: player.currentTime().seconds, global: globalFov, fallback: cur)

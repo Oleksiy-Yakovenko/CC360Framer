@@ -17,6 +17,7 @@ final class PlayerViewController: ModelViewController {
         look.framebufferOnly = true
         let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: look.colorPixelFormat)
         renderer.frameProvider = { [frames = model.frames] host in frames.next(at: host) }
+        renderer.incomingSource = model.frames
         renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
         model.onOverlays = { [weak renderer] in renderer?.setOverlays($0) }
         model.onOverlays?(model.overlays)

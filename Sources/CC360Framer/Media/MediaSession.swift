@@ -67,13 +67,19 @@ final class MediaSession {
         }
     }
 
-    /// Volume 1 for the enabled audio tracks, 0 for the others.
-    func audioMix(for options: [AudioOption]) -> AVAudioMix? {
+    /// Volume 1 for the enabled audio tracks, 0 for the others. `ramp` (preview dissolve) adds a linear volume ramp on the
+    /// enabled tracks over a range of source time, starting the track at the ramp's start volume.
+    func audioMix(for options: [AudioOption], ramp: (range: CMTimeRange, from: Float, to: Float)? = nil) -> AVAudioMix? {
         let mix = AVMutableAudioMix()
         mix.inputParameters = options.compactMap { opt in
             guard let track = composition.track(withTrackID: opt.id) else { return nil }
             let p = AVMutableAudioMixInputParameters(track: track)
-            p.setVolume(opt.enabled ? 1 : 0, at: .zero)
+            if let ramp, opt.enabled {
+                p.setVolume(ramp.from, at: .zero)
+                p.setVolumeRamp(fromStartVolume: ramp.from, toEndVolume: ramp.to, timeRange: ramp.range)
+            } else {
+                p.setVolume(opt.enabled ? 1 : 0, at: .zero)
+            }
             return p
         }
         return mix

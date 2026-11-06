@@ -119,4 +119,74 @@ final class TimeMapTests: XCTestCase {
         XCTAssertTrue(m.segments.isEmpty)
         XCTAssertEqual(m.outputDuration, 0)
     }
+
+    // MARK: Preview dissolve helpers
+
+    func testOverlapsMatchSampleAtOutput() {
+        let m = TimeMap(cuts: [cut(3, 5), cut(8, 9)], duration: 12, crossfade: 1)
+        XCTAssertEqual(m.overlaps.count, 2)
+        let o = m.overlaps[0]
+        XCTAssertEqual(o, TimeMap.Overlap(segment: 0, outStart: 2, outEnd: 3, inStart: 5, length: 1))
+        XCTAssertEqual(o.landing, 6)
+        // Same frames and weight as the exporter's sampling, at several output times inside the dissolve.
+        for k in 0...10 {
+            let tOut = m.segments[1].outputStart + Double(k) / 10 * o.length * 0.999
+            let s = m.sample(atOutput: tOut)!
+            XCTAssertNotNil(s.to)
+            XCTAssertEqual(o.mix(atOutgoing: s.from), s.mix, accuracy: 1e-9)
+            XCTAssertEqual(o.incomingTime(forOutgoing: s.from), s.to!, accuracy: 1e-9)
+            XCTAssertEqual(o.outgoingTime(forIncoming: s.to!), s.from, accuracy: 1e-9)
+        }
+    }
+
+    func testOverlapLookup() {
+        let m = TimeMap(cuts: [cut(3, 5), cut(8, 9)], duration: 12, crossfade: 1)
+        XCTAssertNil(m.overlap(atOutgoingSource: 1.99))
+        XCTAssertEqual(m.overlap(atOutgoingSource: 2)?.segment, 0)
+        XCTAssertEqual(m.overlap(atOutgoingSource: 2.99)?.segment, 0)
+        XCTAssertNil(m.overlap(atOutgoingSource: 3))   // the incoming player has taken over
+        XCTAssertNil(m.overlap(atOutgoingSource: 6.5))
+        XCTAssertEqual(m.overlap(atOutgoingSource: 7.5)?.segment, 1)
+        XCTAssertEqual(m.nextOverlap(after: 0)?.outStart, 2)
+        XCTAssertEqual(m.nextOverlap(after: 2)?.outStart, 7)
+        XCTAssertNil(m.nextOverlap(after: 7))
+    }
+
+    func testMixRampAndClamping() {
+        let o = TimeMap.Overlap(segment: 0, outStart: 10, outEnd: 11, inStart: 20, length: 1)
+        XCTAssertEqual(o.mix(atOutgoing: 9), 0)
+        XCTAssertEqual(o.mix(atOutgoing: 10.25), 0.25, accuracy: 1e-12)
+        XCTAssertEqual(o.mix(atOutgoing: 11.5), 1)
+        XCTAssertEqual(o.incomingTime(forOutgoing: 9), 20)
+        XCTAssertEqual(o.incomingTime(forOutgoing: 12), 21)
+    }
+
+    func testEffectiveFadeIsCappedAndShortSegmentsGoHard() {
+        // Kept 0-1, 2-10: crossfade 3 is capped at half of the short segment (0.5).
+        let m = TimeMap(cuts: [cut(1, 2)], duration: 10, crossfade: 3)
+        XCTAssertEqual(m.overlaps.first?.length ?? 0, 0.5, accuracy: 1e-9)
+        // Crossfade 0 has no overlaps and keeps today's hard jump.
+        let h = TimeMap(cuts: [cut(1, 2)], duration: 10, crossfade: 0)
+        XCTAssertTrue(h.overlaps.isEmpty)
+        XCTAssertEqual(h.hardJumps.count, 1)
+        XCTAssertEqual(h.hardJumps[0].from, 1)
+        XCTAssertEqual(h.hardJumps[0].to, 2)
+    }
+
+    func testHardJumpsExcludeDissolvedCutsButKeepTheEndCut() {
+        let m = TimeMap(cuts: [cut(3, 5), cut(9, 10)], duration: 10, crossfade: 1)
+        XCTAssertEqual(m.jumpPoints.count, 2)
+        XCTAssertEqual(m.hardJumps.count, 1)   // the middle cut dissolves; the trailing cut still jumps (to the end)
+        XCTAssertEqual(m.hardJumps[0].from, 9)
+        XCTAssertEqual(m.hardJumps[0].to, 10)
+        XCTAssertTrue(TimeMap(cuts: [], duration: 10, crossfade: 1).overlaps.isEmpty)
+    }
+
+    func testOverlapWindowsNeverTouchEachOther() {
+        // A short kept part between two cuts: both fades are capped at half of it, so the windows do not overlap.
+        let m = TimeMap(cuts: [cut(2, 3), cut(3.6, 6)], duration: 10, crossfade: 2)
+        let o = m.overlaps
+        XCTAssertEqual(o.count, 2)
+        XCTAssertLessThanOrEqual(o[0].landing, o[1].outStart + 1e-9)
+    }
 }
