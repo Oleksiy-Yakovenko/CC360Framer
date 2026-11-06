@@ -42,6 +42,15 @@ final class GridRow {
     }
 }
 
+/// What a sidebar tab segment shows: its SF Symbol, or the title when the symbol is unavailable.
+enum TabItem {
+    enum Display: Equatable { case symbol, title(String) }
+
+    static func display(symbolAvailable: Bool, title: String) -> Display {
+        symbolAvailable ? .symbol : .title(title)
+    }
+}
+
 /// Small helpers for building controls in code.
 @MainActor
 enum Kit {
@@ -229,11 +238,19 @@ enum Kit {
         private(set) var pages: [NSView] = []
         var selectedIndex: Int { segmented.selectedSegment }
 
-        init(_ tabs: [(title: String, page: NSView)]) {
+        init(_ tabs: [(title: String, symbol: String, tip: String, page: NSView)]) {
             super.init(frame: .zero)
             pages = tabs.map(\.page)
             segmented.segmentCount = tabs.count
-            for (i, t) in tabs.enumerated() { segmented.setLabel(t.title, forSegment: i) }
+            for (i, t) in tabs.enumerated() {
+                let image = NSImage(systemSymbolName: t.symbol, accessibilityDescription: t.tip)
+                switch TabItem.display(symbolAvailable: image != nil, title: t.title) {
+                case .symbol: segmented.setImage(image, forSegment: i)
+                case .title(let title): segmented.setLabel(title, forSegment: i)
+                }
+                segmented.setImageScaling(.scaleProportionallyDown, forSegment: i)
+                segmented.setToolTip(t.tip, forSegment: i)
+            }
             segmented.segmentStyle = .automatic
             segmented.trackingMode = .selectOne
             segmented.target = self

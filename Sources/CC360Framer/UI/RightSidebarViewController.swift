@@ -3,17 +3,17 @@ import AppKit
 
 /// Right sidebar: tabs for the document, export, location card, keyframe inspector and audio tracks.
 final class RightSidebarViewController: ModelViewController {
-    private lazy var tabs: [(String, ModelViewController)] = [
-        ("Document", DocumentTabViewController(model: model)),
-        ("Export", ExportTabViewController(model: model)),
-        ("Location", LocationTabViewController(model: model)),
-        ("Inspector", InspectorTabViewController(model: model)),
-        ("Audio", AudioTabViewController(model: model)),
+    private lazy var tabs: [(title: String, symbol: String, tip: String, vc: ModelViewController)] = [
+        ("Document", "doc", "Document", DocumentTabViewController(model: model)),
+        ("Export", "square.and.arrow.up", "Export Settings", ExportTabViewController(model: model)),
+        ("Location", "mappin.and.ellipse", "Location Card Settings", LocationTabViewController(model: model)),
+        ("Inspector", "slider.horizontal.3", "Inspector", InspectorTabViewController(model: model)),
+        ("Audio", "speaker.wave.2", "Audio", AudioTabViewController(model: model)),
     ]
 
     override func loadView() {
-        for (_, vc) in tabs { addChild(vc) }
-        view = Kit.TabContainer(tabs.map { (title: $0.0, page: $0.1.view) })
+        for t in tabs { addChild(t.vc) }
+        view = Kit.TabContainer(tabs.map { (title: $0.title, symbol: $0.symbol, tip: $0.tip, page: $0.vc.view) })
     }
 }
 
