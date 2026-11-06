@@ -11,10 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 27
+      - name: Select latest Xcode
         run: |
-          app=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$app" ]; then echo "Xcode 27 not found on runner:"; ls -d /Applications/Xcode*; exit 1; fi
+          app=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $app"
           sudo xcode-select -s "$app/Contents/Developer"
 
       - name: Install xcbeautify
