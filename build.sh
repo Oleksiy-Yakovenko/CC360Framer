@@ -30,6 +30,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>GoPro 360 video</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>NSDocumentClass</key><string>CC360VideoDocument</string>
+    <key>CFBundleTypeExtensions</key><array><string>360</string></array>
     <key>LSHandlerRank</key><string>Alternate</string>
     <key>LSItemContentTypes</key><array><string>dev.cc360framer.gopro-360</string></array>
   </dict></array>

@@ -1,120 +1,58 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// One window with its own `PlayerModel`: one per opened file.
-@MainActor
-final class DocumentWindowController: NSWindowController, NSWindowDelegate {
-    let model: PlayerModel
-    let main: MainViewController
-    /// The file this window was asked to open (set before loading finishes, so it counts as taken immediately).
-    private(set) var openedURL: URL?
-    var isEmpty: Bool { openedURL == nil }
-    var onClose: ((DocumentWindowController) -> Void)?
-
-    init(autosave: Bool, cascadeFrom ref: NSWindow?) {
-        let model = PlayerModel()
-        let main = MainViewController(model: model)
-        self.model = model
-        self.main = main
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: false)
-        super.init(window: window)
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.setContentSize(NSSize(width: 1280, height: 800))
-        window.contentMinSize = NSSize(width: 900, height: 520)
-        window.title = "CC360Framer"
-        window.titleVisibility = .hidden
-        if autosave {
-            if !window.setFrameUsingName("MainWindow") { window.center() }
-            window.setFrameAutosaveName("MainWindow")
-        } else if let ref {
-            window.setFrame(ref.frame, display: false)
-            window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: ref.frame.minX, y: ref.frame.maxY)))
-        } else {
-            window.center()
-        }
-        main.install(in: window)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    func open(_ url: URL) {
-        openedURL = url
-        Task { await model.open(url) }
-    }
-
-    /// Edit > Undo/Redo and the text fields' field editor all use the model's undo manager.
-    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
-
-    func windowWillClose(_ notification: Notification) {
-        model.cancelJob()
-        model.cleanup()
-        onClose?(self)
-    }
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
-    private var controllers: [DocumentWindowController] = []
+    private let documents: DocumentController
+    private let launchFile: URL?
     private lazy var batchWindow = BatchWindowController()
 
-    /// The window menu actions apply to: the key window's, else the main window's, else the newest.
-    private var current: DocumentWindowController? {
-        controllers.first { $0.window === NSApp.keyWindow } ?? controllers.first { $0.window === NSApp.mainWindow } ?? controllers.last
+    init(documents: DocumentController, launchFile: URL?) {
+        self.documents = documents
+        self.launchFile = launchFile
+        super.init()
+    }
+
+    /// The document menu actions apply to: the key window's, else the main window's, else the newest.
+    private var current: VideoDocument? {
+        (NSApp.keyWindow?.windowController?.document as? VideoDocument)
+            ?? (documents.currentDocument as? VideoDocument)
+            ?? (documents.documents.last as? VideoDocument)
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        buildMenu()
+        // Before AppKit decides whether anything was opened (and the untitled-file hook below runs).
+        if let launchFile {
+            documents.open([launchFile])
+        } else {
+            documents.restoreSession()
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        buildMenu()
-        let first = makeWindow()
-        first.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
 
-        // First non-flag argument is a file to open on launch (CLI and headless modes use one file).
-        if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
-            open(urls: [URL(fileURLWithPath: path)])
+    /// Closing the last window keeps the app (and a running batch) alive; files open from the menu.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        documents.willTerminate()
+        return .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        for case let doc as VideoDocument in documents.documents {
+            doc.documentWindowController?.saveState()
+            doc.model.cleanup()
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ notification: Notification) { controllers.forEach { $0.model.cleanup() } }
-
-    func application(_ application: NSApplication, open urls: [URL]) { open(urls: urls) }
-
-    private func makeWindow() -> DocumentWindowController {
-        let c = DocumentWindowController(autosave: controllers.isEmpty, cascadeFrom: current?.window)
-        c.onClose = { [weak self] closed in self?.controllers.removeAll { $0 === closed } }
-        c.main.openURLs = { [weak self] urls in self?.open(urls: urls) }
-        controllers.append(c)
-        return c
-    }
-
-    /// One window per file: an empty window is reused first, a file that is already open is just brought forward.
-    func open(urls: [URL]) {
-        for url in urls {
-            let std = url.standardizedFileURL
-            if let existing = controllers.first(where: { $0.openedURL?.standardizedFileURL == std }) {
-                existing.showWindow(nil)
-                continue
-            }
-            let target = (current?.isEmpty == true ? current : nil) ?? controllers.first { $0.isEmpty } ?? makeWindow()
-            target.open(url)
-            target.showWindow(nil)
-        }
-    }
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     // MARK: Actions (menu and toolbar)
-
-    @objc func openDocument(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        // `.360` has no system type unless the app bundle declares one, so accept any file.
-        panel.allowedContentTypes = [.movie, .data]
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK { open(urls: panel.urls) }
-    }
 
     @objc func exportDocument(_ sender: Any?) {
         guard let model = current?.model else { return }
@@ -127,11 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func showBatch(_ sender: Any?) { batchWindow.show() }
-    @objc func toggleSidebar(_ sender: Any?) { current?.main.toggleSidebar(sender) }
-    @objc func toggleInspector(_ sender: Any?) { current?.main.toggleInspector() }
+    @objc func toggleSidebar(_ sender: Any?) { current?.documentWindowController?.main.toggleSidebar(sender) }
+    @objc func toggleInspector(_ sender: Any?) { current?.documentWindowController?.main.toggleInspector() }
     @objc func togglePlay(_ sender: Any?) { current?.model.togglePlay() }
     @objc func setKey(_ sender: Any?) { current?.model.setKey() }
-    @objc func deleteKey(_ sender: Any?) { current?.main.center.timelineBar.confirmDelete() }
+    @objc func deleteKey(_ sender: Any?) { current?.documentWindowController?.main.center.timelineBar.confirmDelete() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Unmodified Space / K / Delete must reach a text field being edited instead.
@@ -169,7 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(app, "Quit CC360Framer", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
 
         let file = submenu("File")
-        add(file, "Open…", #selector(openDocument), "o", target: self)
+        add(file, "Open…", #selector(NSDocumentController.openDocument(_:)), "o", target: documents)
+        let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        let recentMenu = NSMenu(title: "Open Recent")
+        // AppKit fills the menu with the recent documents when it has this item.
+        recentMenu.addItem(withTitle: "Clear Menu", action: #selector(NSDocumentController.clearRecentDocuments(_:)), keyEquivalent: "").target = documents
+        recent.submenu = recentMenu
+        file.addItem(recent)
+        file.addItem(.separator())
         add(file, "Export…", #selector(exportDocument), "e", target: self)
         add(file, "Batch Processing…", #selector(showBatch), "b", [.command, .shift], target: self)
         file.addItem(.separator())
@@ -206,7 +151,12 @@ enum CC360FramerApp {
     static func main() {
         MainActor.assumeIsolated {
             let app = NSApplication.shared
-            let delegate = AppDelegate()
+            let launchFile = launchFileArgument(CommandLine.arguments)
+            // A file argument or CC360_DEBUG is a dev/headless run: it neither reopens nor changes the saved session.
+            let persists = launchFile == nil && ProcessInfo.processInfo.environment["CC360_DEBUG"] == nil
+            // Must exist before anything asks for the shared controller.
+            let documents = DocumentController(persistsSession: persists)
+            let delegate = AppDelegate(documents: documents, launchFile: launchFile)
             app.delegate = delegate
             app.run()
         }

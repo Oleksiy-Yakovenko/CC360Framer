@@ -181,6 +181,9 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     private var bag = Set<AnyCancellable>()
     /// Called with every file dropped on the window; set by the window controller.
     var openURLs: (([URL]) -> Void)?
+    /// Called when the user moved a divider or collapsed a pane (not while the saved layout is applied).
+    var onLayoutChange: (() -> Void)?
+    private var applyingLayout = false
 
     init(model: PlayerModel) {
         self.model = model
@@ -195,9 +198,9 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    /// Builds the panes, puts the split view into the window and sets the default divider positions.
+    /// Builds the panes, puts the split view into the window and sets the divider positions from `layout`.
     /// The window must already have its final size and toolbar delegate (`makeToolbar`) available.
-    func install(in window: NSWindow) {
+    func install(in window: NSWindow, layout: SplitLayout = .standard) {
         SidebarLayout.install(dropSplitView, in: window, toolbar: makeToolbar())
         leftItem = SidebarLayout.sidebarItem(LeftSidebarViewController(model: model), inspector: false, min: 200, max: 400,
                                              to: self, window: window)
@@ -205,8 +208,13 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         inspectorItem = SidebarLayout.sidebarItem(RightSidebarViewController(model: model), inspector: true, min: 280, max: 600,
                                                   to: self, window: window)
         window.contentView?.layoutSubtreeIfNeeded()
-        dropSplitView.setPosition(260, ofDividerAt: 0)
-        dropSplitView.setPosition(dropSplitView.bounds.width - 320, ofDividerAt: 1)
+        apply(layout)
+        NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: dropSplitView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.applyingLayout else { return }
+                self.onLayoutChange?()
+            }
+        }
 
         model.objectWillChange
             .receive(on: RunLoop.main)
@@ -214,6 +222,26 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
             .store(in: &bag)
         // Menu shortcuts and mouse look need the preview to be the first responder.
         window.makeFirstResponder(center.player.lookView)
+    }
+
+    private func apply(_ layout: SplitLayout) {
+        applyingLayout = true
+        defer { applyingLayout = false }
+        let l = layout.fitted(totalWidth: Double(dropSplitView.bounds.width))
+        leftItem?.isCollapsed = l.leftCollapsed
+        inspectorItem?.isCollapsed = l.inspectorCollapsed
+        if !l.leftCollapsed { dropSplitView.setPosition(CGFloat(l.left), ofDividerAt: 0) }
+        if !l.inspectorCollapsed { dropSplitView.setPosition(dropSplitView.bounds.width - CGFloat(l.inspector), ofDividerAt: 1) }
+    }
+
+    /// The pane widths now; a collapsed pane keeps the width of `base`.
+    func currentLayout(base: SplitLayout) -> SplitLayout {
+        var l = base
+        l.leftCollapsed = leftItem?.isCollapsed ?? false
+        l.inspectorCollapsed = inspectorItem?.isCollapsed ?? false
+        if !l.leftCollapsed, let w = leftItem?.viewController.view.frame.width, w > 0 { l.left = Double(w) }
+        if !l.inspectorCollapsed, let w = inspectorItem?.viewController.view.frame.width, w > 0 { l.inspector = Double(w) }
+        return l
     }
 
     func toggleInspector() { inspectorItem?.animator().isCollapsed.toggle() }
