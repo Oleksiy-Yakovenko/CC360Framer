@@ -131,14 +131,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func toggleInspector(_ sender: Any?) { current?.main.toggleInspector() }
     @objc func togglePlay(_ sender: Any?) { current?.model.togglePlay() }
     @objc func setKey(_ sender: Any?) { current?.model.setKey() }
-    @objc func deleteKey(_ sender: Any?) { current?.main.center.keyframes.confirmDeleteKey() }
+    @objc func deleteKey(_ sender: Any?) { current?.main.center.timelineBar.confirmDelete() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Unmodified Space / K / Delete must reach a text field being edited instead.
         let typing = NSApp.keyWindow?.firstResponder is NSText
         let model = current?.model
         switch item.action {
-        case #selector(deleteKey): return !typing && model?.selectedKey != nil
+        case #selector(deleteKey): return !typing && model?.timeline.canDelete == true
         case #selector(togglePlay), #selector(setKey): return !typing && (model?.duration ?? 0) > 0
         case #selector(exportDocument): return (model?.duration ?? 0) > 0 || model?.exportProgress != nil
         default: return true
@@ -190,7 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let play = submenu("Playback")
         add(play, "Play / Pause", #selector(togglePlay), " ", [], target: self)
         add(play, "Set Keyframe", #selector(setKey), "k", [], target: self)
-        add(play, "Delete Keyframe", #selector(deleteKey), "\u{8}", [], target: self)
+        add(play, "Delete Selected", #selector(deleteKey), "\u{8}", [], target: self)
 
         let windows = submenu("Window")
         add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")

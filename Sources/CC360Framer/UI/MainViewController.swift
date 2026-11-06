@@ -24,26 +24,26 @@ final class DropSplitView: NSSplitView {
 final class CenterViewController: NSViewController {
     let player: PlayerViewController
     let transport: TransportViewController
-    let keyframes: KeyframeViewController
+    let timelineBar: TimelineBarViewController
 
     init(model: PlayerModel) {
         player = PlayerViewController(model: model)
         transport = TransportViewController(model: model)
-        keyframes = KeyframeViewController(model: model)
+        timelineBar = TimelineBarViewController(model: model)
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override func loadView() {
-        for child in [player, transport, keyframes] { addChild(child) }
-        let stack = NSStackView(views: [player.view, transport.view, keyframes.view])
+        for child in [player, transport, timelineBar] { addChild(child) }
+        let stack = NSStackView(views: [player.view, transport.view, timelineBar.view])
         stack.orientation = .vertical
         stack.alignment = .width
         stack.spacing = 0
         player.view.setContentHuggingPriority(.defaultLow, for: .vertical)
         player.view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        for v in [transport.view, keyframes.view] {
+        for v in [transport.view, timelineBar.view] {
             v.setContentHuggingPriority(.required, for: .vertical)
             v.setContentCompressionResistancePriority(.required, for: .vertical)
         }

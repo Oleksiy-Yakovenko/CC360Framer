@@ -184,12 +184,15 @@ final class LocationTabViewController: ModelViewController {
     @objc private func reset() { model.setCardStyle(LocationCardStyle(), name: "Reset Card Look") }
 }
 
-/// Numeric editor for the selected keyframe.
+/// Numeric editor for the selected timeline item: a keyframe, or the start and end of a cut.
 final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate {
-    private let empty = NSTextField(wrappingLabelWithString: "Select a keyframe (click a diamond under the seekbar) to edit it here.")
+    private let empty = NSTextField(wrappingLabelWithString: "")
     private let timeField = NSTextField(), yawField = NSTextField(), pitchField = NSTextField(), fovField = NSTextField()
-    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField] }
-    private var form: NSView!
+    private let cutStartField = NSTextField(), cutEndField = NSTextField()
+    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField] }
+    private var keyForm: NSView!
+    private var cutForm: NSView!
+    private let heading = Kit.title("Keyframe", tip: "Edit the selected item; changes can be undone.")
 
     override func loadView() {
         view = NSView()
@@ -204,36 +207,57 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         yawField.toolTip = "Degrees, -180 to 180 (0 = front)"
         pitchField.toolTip = "Degrees, -85 to 85"
         fovField.toolTip = "Vertical field of view in degrees, 20 to 140"
-        let rows = NSStackView(views: [
-            Kit.labeledRow("Time (s)", timeField), Kit.labeledRow("Yaw (°)", yawField),
-            Kit.labeledRow("Pitch (°)", pitchField), Kit.labeledRow("FOV (°)", fovField),
-        ])
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 6
-        for r in rows.arrangedSubviews { r.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true }
-        form = rows
+        cutStartField.toolTip = "Start of the cut in seconds of the source video"
+        cutEndField.toolTip = "End of the cut in seconds of the source video"
+        func form(_ rows: [NSView]) -> NSStackView {
+            let s = NSStackView(views: rows)
+            s.orientation = .vertical
+            s.alignment = .leading
+            s.spacing = 6
+            for r in s.arrangedSubviews { r.widthAnchor.constraint(equalTo: s.widthAnchor).isActive = true }
+            s.identifier = Kit.fullWidthID
+            return s
+        }
+        keyForm = form([Kit.labeledRow("Time (s)", timeField), Kit.labeledRow("Yaw (°)", yawField),
+                        Kit.labeledRow("Pitch (°)", pitchField), Kit.labeledRow("FOV (°)", fovField)])
+        cutForm = form([Kit.labeledRow("Start (s)", cutStartField), Kit.labeledRow("End (s)", cutEndField)])
         empty.identifier = Kit.fullWidthID
-        rows.identifier = Kit.fullWidthID
-        Kit.sidebarStack(in: view, [Kit.title("Keyframe", tip: "Edit the selected keyframe; changes can be undone."), empty, rows], topAnchor: view.topAnchor)
+        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm], topAnchor: view.topAnchor)
     }
 
     override func refresh() {
-        let key = model.selectedKeyframe
-        empty.isHidden = key != nil
-        form.isHidden = key == nil
-        guard let key else { return }
-        let v = KeyframeEdit.Values(key)
+        let kind = model.activeTimeline
+        let key = kind == .keyframes ? model.selectedKeyframe : nil
+        let cut = kind == .cuts ? model.selectedCutRegion : nil
+        heading.stringValue = kind == .cuts ? "Cut" : "Keyframe"
+        empty.stringValue = kind == .cuts ? "Select a cut (click its bar under the seekbar) to edit it here."
+                                          : "Select a keyframe (click a diamond under the seekbar) to edit it here."
+        empty.isHidden = key != nil || cut != nil
+        keyForm.isHidden = key == nil
+        cutForm.isHidden = cut == nil
         func show(_ f: NSTextField, _ x: Double, _ digits: Int) {
             if f.currentEditor() == nil { f.stringValue = String(format: "%.\(digits)f", x) }   // do not clobber typing
         }
-        show(timeField, v.time, 2); show(yawField, v.yaw, 1); show(pitchField, v.pitch, 1); show(fovField, v.fov, 1)
+        if let key {
+            let v = KeyframeEdit.Values(key)
+            show(timeField, v.time, 2); show(yawField, v.yaw, 1); show(pitchField, v.pitch, 1); show(fovField, v.fov, 1)
+        }
+        if let cut { show(cutStartField, cut.start, 2); show(cutEndField, cut.end, 2) }
     }
 
+    private func parse(_ f: NSTextField, _ old: Double) -> Double { Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) ?? old }
+
     @objc private func commit() {
+        let cutFields = [cutStartField, cutEndField]
+        if model.activeTimeline == .cuts, let cut = model.selectedCutRegion {
+            let (s, e) = (parse(cutStartField, cut.start), parse(cutEndField, cut.end))
+            for f in cutFields { f.abortEditing() }
+            model.editSelectedCut(start: s, end: e)
+            refresh()
+            return
+        }
         guard let key = model.selectedKeyframe else { return }
         var v = KeyframeEdit.Values(key)
-        func parse(_ f: NSTextField, _ old: Double) -> Double { Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) ?? old }
         v.time = parse(timeField, v.time); v.yaw = parse(yawField, v.yaw)
         v.pitch = parse(pitchField, v.pitch); v.fov = parse(fovField, v.fov)
         for f in fields { f.abortEditing() }

@@ -47,6 +47,22 @@ final class PlayerModel: ObservableObject {
     @Published var errorText: String?
     @Published var keyframes: [Keyframe] = [] { didSet { path = CameraPath(keys: keyframes) } }
     @Published var selectedKey: UUID?
+    /// Which timeline the bottom bar and seekbar edit (not saved).
+    @Published var activeTimeline: TimelineKind = .keyframes
+    /// Cut regions (source time), per file in the project sidecar.
+    @Published var cuts: [CutRegion] = [] { didSet { if cuts != oldValue { cutsChanged() } } }
+    @Published var selectedCut: UUID?
+    /// Preview playback skips the cut regions; per file in the project sidecar.
+    @Published var previewWithCuts = false { didSet { if previewWithCuts != oldValue { cutsChanged() } } }
+    struct CutSnapshot: Equatable { var cuts: [CutRegion]; var selected: UUID? }
+    private(set) lazy var cutUndo = SnapshotUndo<CutSnapshot>(
+        manager: undo.manager,
+        capture: { [unowned self] in CutSnapshot(cuts: cuts, selected: selectedCut) },
+        restore: { [unowned self] s in
+            cuts = s.cuts
+            selectedCut = s.selected
+        })
+    var cutDragStart: CutSnapshot?
     /// Keyframes and selection as one undoable unit.
     struct KeySnapshot: Equatable { var keys: [Keyframe]; var selected: UUID? }
     private(set) lazy var undo = SnapshotUndo<KeySnapshot>(
@@ -108,6 +124,7 @@ final class PlayerModel: ObservableObject {
     /// Look of the location card; per file, saved in the project sidecar.
     @Published private(set) var cardStyle = LocationCardStyle()
     private var loadingProject = false
+    var loadingProjectFlag: Bool { loadingProject }
     private var lastCardEdit: (name: String, at: Date)?
     private(set) lazy var cardUndo = SnapshotUndo<LocationCardStyle>(
         manager: undo.manager,
@@ -142,6 +159,9 @@ final class PlayerModel: ObservableObject {
         cardStyle = proj.locationStyle ?? LocationCardStyle()
         exportSettings = proj.exportSettings ?? ExportSettings.loadDefaults()
         globalFov = proj.globalFov ?? GlobalFov.loadDefaults()
+        cuts = proj.cuts ?? []
+        selectedCut = nil
+        previewWithCuts = proj.previewWithCuts ?? false
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
             ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft
@@ -151,7 +171,8 @@ final class PlayerModel: ObservableObject {
 
     func saveProject() {
         guard !loadingProject, let sourceURL else { return }
-        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov).save(for: sourceURL)
+        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov,
+                       cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil).save(for: sourceURL)
     }
 
     var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }

@@ -7,6 +7,10 @@ struct ProjectSidecar: Codable, Equatable {
     var locationPlacement: OverlayPlacement?
     var exportSettings: ExportSettings?
     var globalFov: GlobalFov?
+    /// Removed stretches of the source video (nil = none).
+    var cuts: [CutRegion]?
+    /// Preview playback skips the cuts (nil = off).
+    var previewWithCuts: Bool?
 
     static let kind = "project"
 

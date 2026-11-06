@@ -39,7 +39,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(ProjectSidecar.decode(p.encoded()!), p)
         // Empty, and files with unknown (future) keys, still load.
         XCTAssertEqual(ProjectSidecar.decode(Data("{}".utf8)), ProjectSidecar())
-        let future = ProjectSidecar.decode(Data(#"{"locationPlacement":"Centre","cuts":[1,2]}"#.utf8))
+        let future = ProjectSidecar.decode(Data(#"{"locationPlacement":"Centre","captions":[1,2]}"#.utf8))
         XCTAssertEqual(future?.locationPlacement, .center)
         XCTAssertNil(future?.locationStyle)
     }

@@ -13,50 +13,83 @@ final class ScrubSlider: NSSlider {
     }
 }
 
-/// Keyframe markers under the seekbar; click one to select it and jump there.
-final class KeyTicksView: NSView {
-    var keys: [Keyframe] = []
+/// Markers of the active timeline under the seekbar: diamonds for points, bars with draggable edges for regions.
+/// Click selects (and seeks); dragging a region edge resizes it.
+final class TimelineMarkersView: NSView {
+    var adapter: TimelineAdapter?
+    var items: [TimelineItem] = []
     var selected: UUID?
     var duration: Double = 0
-    var onSelect: ((Keyframe) -> Void)?
-    private let inset: CGFloat = 8   // slider thumb radius
+    private var dragging: (id: UUID, edge: RegionEdit.Edge)?
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 12) }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 14) }
 
-    private func x(_ key: Keyframe) -> CGFloat {
-        inset + max(bounds.width - inset * 2, 1) * CGFloat(key.time / max(duration, 0.1))
-    }
+    private var layoutInfo: TimelineLayout { TimelineLayout(width: bounds.width, duration: duration) }
 
     override func draw(_ dirtyRect: NSRect) {
-        for key in keys {
-            let isSel = key.id == selected
-            let r: CGFloat = isSel ? 5 : 3.5
-            let c = CGPoint(x: x(key), y: bounds.midY)
-            let path = NSBezierPath()
-            path.move(to: CGPoint(x: c.x, y: c.y - r))
-            path.line(to: CGPoint(x: c.x + r, y: c.y))
-            path.line(to: CGPoint(x: c.x, y: c.y + r))
-            path.line(to: CGPoint(x: c.x - r, y: c.y))
-            path.close()
-            (isSel ? NSColor.controlAccentColor : NSColor.systemOrange).setFill()
-            path.fill()
+        let l = layoutInfo
+        for item in items {
+            let isSel = item.id == selected
+            if let end = item.end {
+                let r = NSRect(x: l.x(item.start), y: 2, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 4)
+                (isSel ? NSColor.controlAccentColor : NSColor.systemRed).withAlphaComponent(isSel ? 0.9 : 0.7).setFill()
+                NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2).fill()
+                if isSel {   // grab handles
+                    NSColor.white.setFill()
+                    for x in [r.minX, r.maxX - 3] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY + 2, width: 3, height: r.height - 4), xRadius: 1, yRadius: 1).fill() }
+                }
+            } else {
+                let rad: CGFloat = isSel ? 5 : 3.5
+                let c = CGPoint(x: l.x(item.start), y: bounds.midY)
+                let path = NSBezierPath()
+                path.move(to: CGPoint(x: c.x, y: c.y - rad))
+                path.line(to: CGPoint(x: c.x + rad, y: c.y))
+                path.line(to: CGPoint(x: c.x, y: c.y + rad))
+                path.line(to: CGPoint(x: c.x - rad, y: c.y))
+                path.close()
+                (isSel ? NSColor.controlAccentColor : NSColor.systemOrange).setFill()
+                path.fill()
+            }
         }
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard let adapter else { return }
         let p = convert(event.locationInWindow, from: nil)
-        if let hit = keys.min(by: { abs(x($0) - p.x) < abs(x($1) - p.x) }), abs(x(hit) - p.x) <= 8 { onSelect?(hit) }
+        switch layoutInfo.hit(items, selected: selected, at: p.x) {
+        case .point(let id), .region(let id): adapter.select(id)
+        case .regionStart(let id): startDrag(adapter, id, .start)
+        case .regionEnd(let id): startDrag(adapter, id, .end)
+        case nil: break
+        }
+    }
+
+    private func startDrag(_ adapter: TimelineAdapter, _ id: UUID, _ edge: RegionEdit.Edge) {
+        adapter.selectQuietly(id)
+        adapter.beginDrag()
+        dragging = (id, edge)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let adapter, let d = dragging else { return }
+        adapter.drag(d.id, edge: d.edge, to: layoutInfo.time(convert(event.locationInWindow, from: nil).x))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragging != nil else { return }
+        dragging = nil
+        adapter?.endDrag()
     }
 }
 
-/// Play button, position, seekbar with keyframe ticks, duration.
+/// Play button, position, seekbar with the active timeline's markers, duration.
 final class TransportViewController: ModelViewController {
     private var playButton = NSButton()
     private let positionLabel = NSTextField(labelWithString: "0:00")
     private let durationLabel = NSTextField(labelWithString: "0:00")
     private let slider = ScrubSlider()
-    private let ticks = KeyTicksView()
+    private let ticks = TimelineMarkersView()
     private var dragging = false
 
     override func loadView() {
@@ -78,7 +111,6 @@ final class TransportViewController: ModelViewController {
             self.dragging = false
             self.model.endScrub(at: self.slider.doubleValue)
         }
-        ticks.onSelect = { [weak self] in self?.model.select($0) }
 
         let seek = NSStackView(views: [slider, ticks])
         seek.orientation = .vertical
@@ -106,8 +138,10 @@ final class TransportViewController: ModelViewController {
         durationLabel.stringValue = Kit.time(model.duration)
         slider.maxValue = max(model.duration, 0.1)
         if !dragging { slider.doubleValue = model.position }
-        ticks.keys = model.keyframes
-        ticks.selected = model.selectedKey
+        let timeline = model.timeline
+        ticks.adapter = timeline
+        ticks.items = timeline.items
+        ticks.selected = timeline.selected
         ticks.duration = model.duration
         ticks.needsDisplay = true
     }
