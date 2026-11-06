@@ -136,7 +136,7 @@ enum Kit {
     /// Never trusts `indexOfSelectedItem`: it stays on the last preset after a non-preset value is typed.
     static func readSize(_ c: NSComboBox, range: ClosedRange<Double>, step: Double = 1, current: Double) -> Double {
         let picked = (c as? SizeComboBox)?.takePick()
-        let text = SizeInput.chosenText(pickedItem: picked, editorText: (c.currentEditor() as? NSText)?.string, stringValue: c.stringValue)
+        let text = SizeInput.chosenText(pickedItem: picked, editorText: c.currentEditor()?.string, stringValue: c.stringValue)
         let v = SizeInput.parse(text, range: range, step: step) ?? current
         c.stringValue = SizeInput.format(v)
         return v

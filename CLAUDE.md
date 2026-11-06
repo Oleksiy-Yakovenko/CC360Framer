@@ -58,6 +58,7 @@ Sidecars (`Model/Sidecar.swift`: `Sidecar.url/read/write`) live in `CC360Framer.
 - Destructive actions (clear, delete) ask for confirmation with an `NSAlert` and are undoable through `PlayerModel.undoManager`.
 
 ## Tests
+- **Fix all compiler warnings before committing**: a clean `swift build` and `swift test` (check with a full rebuild, since incremental builds hide warnings) must produce zero warnings, not just zero errors.
 XCTest target `Tests/CC360FramerTests` (`@testable import CC360Framer`), run with `swift test`. It covers the pure logic: `CameraPath`/`PathBuilder`, `PathStyle`/`SceneryPlanner`, `Stabilizer`/`Gaussian`, overlay alpha/placement.
 - **Add test coverage for every piece of new or changed logic** (anything not tied to Metal, AVFoundation or UI), in the matching `*Tests.swift` file. Fix bugs with a regression test.
 - **Always run `swift test` to verify your work** before finishing or committing, and report failures honestly. Do not commit with failing tests.

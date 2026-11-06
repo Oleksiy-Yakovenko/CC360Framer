@@ -106,7 +106,7 @@ struct PlaceInfo: Codable, Equatable {
         }
         let current = cached.withAltitude(of: fix)
         if cached.isStale {
-            if let provisional { await provisional(current) }
+            if let provisional { provisional(current) }
             if let g = await geocoder(fix) { return (g, true) }
             return (current, false)
         }
