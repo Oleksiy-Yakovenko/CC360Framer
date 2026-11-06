@@ -36,7 +36,11 @@ Sidecars next to the video: `<file>.analysis.json` (raw detections), `<file>.ref
 - Remaining ~0.7° wobble at 0.5-2 Hz is translation parallax; rotation cannot remove it.
 
 ## Tests
-There is no XCTest target. Verification is by the CLI tools in `README.md` and by eye:
+XCTest target `Tests/CC360FramerTests` (`@testable import CC360Framer`), run with `swift test`. It covers the pure logic: `CameraPath`/`PathBuilder`, `PathStyle`/`SceneryPlanner`, `Stabilizer`/`Gaussian`, overlay alpha/placement.
+- **Add test coverage for every piece of new or changed logic** (anything not tied to Metal, AVFoundation or UI), in the matching `*Tests.swift` file. Fix bugs with a regression test.
+- **Always run `swift test` to verify your work** before finishing or committing, and report failures honestly. Do not commit with failing tests.
+
+Things unit tests cannot cover are still verified by the CLI tools in `README.md` and by eye:
 - Stabiliser: `--stab-test` on a clip with a static start (`GS010068.360`) and `--snapshot` at max-lean (110.38 s of `GS010074.360`) and max-pitch (51.99 s) for horizon check.
 - Analysis/paths: `CC360_BATCH` with a scratch copy of the video symlink and cached `.analysis.json` (never write into the user's footage folder); check keyframe timeline (Follow: constant fov 70, mostly pointing at the rider; Scenery: fov 55-70, 0-2 rider shots) and extract export frames at keyframe times.
 - Telemetry: `--telemetry` should report one sample per video frame.

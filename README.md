@@ -11,6 +11,8 @@ Command line:
 
 `./build.sh` makes a release build wrapped as an ad-hoc signed `CC360Framer.app`. You can also use `swift build` (or `swift build -c release`) and `swift run CC360Framer file.360`; these run the bare binary without an app bundle.
 
+Run the unit tests with `swift test`.
+
 Xcode:
 
 - `open -a Xcode Package.swift` (there is no `.xcodeproj`; Xcode opens the SwiftPM package directly).
