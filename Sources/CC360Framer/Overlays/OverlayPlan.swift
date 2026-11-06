@@ -1,20 +1,27 @@
 import CoreGraphics
 import Foundation
 
-/// A location card shown from `time` (source seconds) on, with its own placement. The look is the global `LocationCardStyle`.
+/// A location card shown from `time` (source seconds) on. The look and, unless overridden, the placement are the global
+/// Location tab settings; `placement` is an optional per-key override (nil = inherit the global placement).
+///
+/// Back-compat: sidecars written before overrides existed store a plain `placement` per key; it is kept as an explicit override
+/// (it preserves what the user had set, even when it equals the global value). A missing or unreadable `placement` inherits.
 struct LocationCardKey: Codable, Equatable, Identifiable {
     var id = UUID()
     var time: Double
-    var placement: OverlayPlacement
+    var placement: OverlayPlacement?
 
-    init(id: UUID = UUID(), time: Double, placement: OverlayPlacement) { self.id = id; self.time = time; self.placement = placement }
+    init(id: UUID = UUID(), time: Double, placement: OverlayPlacement? = nil) { self.id = id; self.time = time; self.placement = placement }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         time = try c.decode(Double.self, forKey: .time)
-        placement = (try? c.decodeIfPresent(OverlayPlacement.self, forKey: .placement)) ?? .bottomLeft
+        placement = (try? c.decodeIfPresent(OverlayPlacement.self, forKey: .placement)) ?? nil
     }
+
+    /// The placement this card is drawn with: its override, else the global one.
+    func effectivePlacement(global: OverlayPlacement) -> OverlayPlacement { placement ?? global }
 }
 
 /// Which location card is on screen at a given source time, and editing rules for the card keyframes.
@@ -37,24 +44,24 @@ enum LocationCards {
         if keys.isEmpty {
             a = autoEnabled ? Active(placement: autoPlacement, alpha: LocationOverlay.alpha(at: t)) : nil
         } else if let k = keys.filter({ $0.time <= t }).max(by: { $0.time < $1.time }) {
-            a = Active(placement: k.placement, alpha: LocationOverlay.alpha(at: t - k.time))
+            a = Active(placement: k.effectivePlacement(global: autoPlacement), alpha: LocationOverlay.alpha(at: t - k.time))
         } else {
             a = nil
         }
         return a.flatMap { $0.alpha > 0 ? $0 : nil }
     }
 
-    /// Adds a card at `time` (clamped to the clip). nil when another keyframe is within `minSpacing`.
-    static func add(_ keys: [LocationCardKey], at time: Double, placement: OverlayPlacement, duration: Double) -> (keys: [LocationCardKey], added: LocationCardKey)? {
+    /// Adds a card at `time` (clamped to the clip) that inherits the global placement. nil when another keyframe is within `minSpacing`.
+    static func add(_ keys: [LocationCardKey], at time: Double, duration: Double) -> (keys: [LocationCardKey], added: LocationCardKey)? {
         guard time.isFinite, duration > 0 else { return nil }
         let t = max(0, min(time, duration))
         if keys.contains(where: { abs($0.time - t) < minSpacing }) { return nil }
-        let k = LocationCardKey(time: t, placement: placement)
+        let k = LocationCardKey(time: t)
         return ((keys + [k]).sorted { $0.time < $1.time }, k)
     }
 
-    /// Sets time and placement of one card (time clamped to the clip). nil when unknown, not finite or too close to another card.
-    static func set(_ keys: [LocationCardKey], id: UUID, time: Double, placement: OverlayPlacement, duration: Double) -> [LocationCardKey]? {
+    /// Sets time and placement override (nil = inherit) of one card (time clamped to the clip). nil when unknown, not finite or too close to another card.
+    static func set(_ keys: [LocationCardKey], id: UUID, time: Double, placement: OverlayPlacement?, duration: Double) -> [LocationCardKey]? {
         guard let i = keys.firstIndex(where: { $0.id == id }), time.isFinite else { return nil }
         let t = max(0, duration > 0 ? min(time, duration) : time)
         if keys.enumerated().contains(where: { $0.offset != i && abs($0.element.time - t) < minSpacing }) { return nil }
@@ -163,7 +170,7 @@ struct OverlayPlan: Equatable {
     /// Placements the card can appear with (to know which bitmaps to build).
     var cardPlacements: [OverlayPlacement] {
         guard hasPlace, showCard else { return [] }
-        return cardKeys.isEmpty ? (autoCard ? [autoPlacement] : []) : cardKeys.map(\.placement)
+        return cardKeys.isEmpty ? (autoCard ? [autoPlacement] : []) : cardKeys.map { $0.effectivePlacement(global: autoPlacement) }
     }
 
     /// `builtShort`: short side of the target the bitmaps were rasterised for (`OverlayBundle.targetShort`); drawing into a

@@ -29,12 +29,12 @@ final class OverlayPlanTests: XCTestCase {
     }
 
     func testAddAndSet() throws {
-        let r = try XCTUnwrap(LocationCards.add([], at: 20, placement: .center, duration: 100))
+        let r = try XCTUnwrap(LocationCards.add([], at: 20, duration: 100))
         XCTAssertEqual(r.keys, [r.added])
-        XCTAssertNil(LocationCards.add(r.keys, at: 20.05, placement: .center, duration: 100))
-        let r2 = try XCTUnwrap(LocationCards.add(r.keys, at: 5, placement: .topLeft, duration: 100))
+        XCTAssertNil(LocationCards.add(r.keys, at: 20.05, duration: 100))
+        let r2 = try XCTUnwrap(LocationCards.add(r.keys, at: 5, duration: 100))
         XCTAssertEqual(r2.keys.map(\.time), [5, 20])
-        XCTAssertEqual(try XCTUnwrap(LocationCards.add([], at: 500, placement: .center, duration: 100)).added.time, 100)
+        XCTAssertEqual(try XCTUnwrap(LocationCards.add([], at: 500, duration: 100)).added.time, 100)
         let moved = try XCTUnwrap(LocationCards.set(r2.keys, id: r2.added.id, time: 50, placement: .bottomLeft, duration: 100))
         XCTAssertEqual(moved.map(\.time), [20, 50])
         XCTAssertEqual(moved[1].placement, .bottomLeft)
@@ -80,7 +80,15 @@ final class OverlayPlanTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(LocationCardKey.self, from: JSONEncoder().encode(k)), k)
         let lenient = try JSONDecoder().decode(LocationCardKey.self, from: Data(#"{"time": 3, "placement": "nonsense"}"#.utf8))
         XCTAssertEqual(lenient.time, 3)
-        XCTAssertEqual(lenient.placement, .bottomLeft)
+        XCTAssertNil(lenient.placement)   // unreadable = inherit
+        // Old sidecars stored a plain placement: kept as an explicit override.
+        let old1 = try JSONDecoder().decode(LocationCardKey.self, from: Data(#"{"time": 3, "placement": "Centre"}"#.utf8))
+        XCTAssertEqual(old1.placement, .center)
+        XCTAssertEqual(old1.effectivePlacement(global: .topLeft), .center)
+        let inherit = try JSONDecoder().decode(LocationCardKey.self, from: Data(#"{"time": 3}"#.utf8))
+        XCTAssertNil(inherit.placement)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(inherit), as: UTF8.self).contains("placement"))
+        XCTAssertEqual(inherit.effectivePlacement(global: .topLeft), .topLeft)
         let p = ProjectSidecar(locationCards: [k], autoLocationCard: false)
         XCTAssertEqual(ProjectSidecar.decode(p.encoded()!), p)
         let old = ProjectSidecar.decode(Data(#"{"locationPlacement":"Centre"}"#.utf8))
@@ -272,6 +280,24 @@ final class OverlayPlanTests: XCTestCase {
         XCTAssertGreaterThan(h64, h24 * 1.8)
         XCTAssertGreaterThan(h128, h64 * 1.5)
         XCTAssertEqual(height(64, short: 540), height(64) / 2, accuracy: 3)
+    }
+
+    func testCardPlacementInheritance() {
+        // New keys inherit; the effective placement follows the global one, an override does not.
+        let added = LocationCards.add([], at: 5, duration: 100)!
+        XCTAssertNil(added.added.placement)
+        let keys = [added.added, key(30, .center)]
+        XCTAssertEqual(LocationCards.active(keys: keys, autoEnabled: true, autoPlacement: .topRight, at: 6)?.placement, .topRight)
+        XCTAssertEqual(LocationCards.active(keys: keys, autoEnabled: true, autoPlacement: .bottomLeft, at: 6)?.placement, .bottomLeft)
+        XCTAssertEqual(LocationCards.active(keys: keys, autoEnabled: true, autoPlacement: .topRight, at: 31)?.placement, .center)
+        var plan = OverlayPlan(); plan.hasPlace = true; plan.cardKeys = keys; plan.autoPlacement = .topRight
+        XCTAssertEqual(plan.cardPlacements, [.topRight, .center])
+        XCTAssertEqual(plan.draws(at: 6).first?.placement, .topRight)
+        // Toggling the override through set: on = explicit value, off = nil again.
+        let on = LocationCards.set(keys, id: keys[0].id, time: 5, placement: .bottomRight, duration: 100)!
+        XCTAssertEqual(on[0].placement, .bottomRight)
+        let off = LocationCards.set(on, id: keys[0].id, time: 5, placement: nil, duration: 100)!
+        XCTAssertEqual(off, keys)
     }
 
     // MARK: place resolution

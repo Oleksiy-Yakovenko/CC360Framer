@@ -188,6 +188,7 @@ final class LocationTabViewController: ModelViewController {
     private let strokeSlider = NSSlider(value: 0, minValue: 0, maxValue: 12, target: nil, action: nil)
     private var resetButton = NSButton()
     private var autoCheck = NSButton()
+    private let autoNote = NSTextField(wrappingLabelWithString: "The automatic card is off while card keyframes exist. Add a keyframe at 0 s to show a card at the start.")
     private var showCheck = NSButton()
     private var fieldChecks: [(key: WritableKeyPath<LocationCardFields, Bool>, button: NSButton)] = []
 
@@ -205,8 +206,12 @@ final class LocationTabViewController: ModelViewController {
             return (key, b)
         }
         autoCheck = NSButton(checkboxWithTitle: "Automatic card at start", target: self, action: #selector(autoToggled))
-        autoCheck.toolTip = "Show the card for the first 10 s of the video when no card keyframes exist. As soon as you add cards on the Location cards timeline only those are shown (add one at 0 s to keep a card at the start)."
-        placementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the automatic card (first 10 s) is placed, and the placement of newly added card keyframes. Each card keyframe keeps its own placement (Inspector tab).",
+        autoCheck.toolTip = "Show the card for the first 10 s of the video when no card keyframes exist. As soon as you add cards on the Location cards timeline only those are shown (add one at 0 s to keep a card at the start). A note below says when the automatic card is off for that reason."
+        autoNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        autoNote.textColor = .secondaryLabelColor
+        autoNote.identifier = Kit.fullWidthID
+        autoNote.isHidden = true
+        placementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the automatic card (first 10 s) is placed, and the placement of every card keyframe that does not override it (Inspector tab).",
                                    target: self, action: #selector(placementChosen))
         fontPopup = Kit.fontPopup(tip: "Font family of the card", target: self, action: #selector(styleChanged))
         fontPopup.insertItem(withTitle: "System", at: 0)
@@ -221,6 +226,7 @@ final class LocationTabViewController: ModelViewController {
             Kit.title("Location card", tip: "Place-name card shown for 10 s, in preview and export: at the start of the video, or at the card keyframes of the Location cards timeline. The look below applies to all cards."),
             showCheck,
             autoCheck,
+            autoNote,
             placementPopup,
         ] + fieldChecks.map(\.button) + [
             Kit.labeledRow("Font", fontPopup),
@@ -246,6 +252,7 @@ final class LocationTabViewController: ModelViewController {
         showCheck.state = o.show ? .on : .off
         for (key, b) in fieldChecks { b.state = o.fields[keyPath: key] ? .on : .off; b.isEnabled = o.show }
         autoCheck.isEnabled = o.show
+        autoNote.isHidden = model.cardKeys.isEmpty   // status: the automatic card is ignored while card keyframes exist
     }
 
     @objc private func showToggled() {
@@ -292,6 +299,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth] }
     private let cardTimeField = NSTextField()
     private var cardPlacementPopup = NSPopUpButton()
+    private var cardOverrideCheck = NSButton()
     private let capStartField = NSTextField(), capEndField = NSTextField()
     private let capTextView = NSTextView()
     private var capScroll = NSScrollView()
@@ -321,7 +329,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cutStartField.toolTip = "Start of the cut in seconds of the source video"
         cutEndField.toolTip = "End of the cut in seconds of the source video"
         cardTimeField.toolTip = "Time in seconds of the source video at which the location card appears (it stays for 10 s)"
-        cardPlacementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where this location card is placed", target: self, action: #selector(commit))
+        cardPlacementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where this location card is placed (the Location tab's placement while the override is off)", target: self, action: #selector(commit))
+        cardOverrideCheck = NSButton(checkboxWithTitle: "Override placement", target: self, action: #selector(cardOverrideToggled))
+        cardOverrideCheck.toolTip = "Off: this card uses the placement chosen in the Location tab. On: it has its own placement."
         func form(_ rows: [NSView]) -> NSStackView {
             let s = NSStackView(views: rows)
             s.orientation = .vertical
@@ -369,7 +379,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
                             Kit.labeledRow("Placement", ovPlacement), Kit.labeledRow("Font", ovFont),
                             Kit.labeledRow("Size (%)", ovSize), Kit.labeledRow("Colour", ovFill),
                             Kit.labeledRow("Outline", ovStroke), Kit.labeledRow("Width (%)", ovStrokeWidth), ovReset])
-        cardForm = form([Kit.labeledRow("Time (s)", cardTimeField), Kit.labeledRow("Placement", cardPlacementPopup)])
+        cardForm = form([Kit.labeledRow("Time (s)", cardTimeField), cardOverrideCheck, Kit.labeledRow("Placement", cardPlacementPopup)])
         empty.identifier = Kit.fullWidthID
         Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm], topAnchor: view.topAnchor)
     }
@@ -403,7 +413,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         if let caption { showCaption(caption) }
         if let card {
             show(cardTimeField, card.time, 2)
-            cardPlacementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: card.placement) ?? 0)
+            cardOverrideCheck.state = card.placement != nil ? .on : .off
+            cardPlacementPopup.isEnabled = card.placement != nil
+            cardPlacementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: card.effectivePlacement(global: model.overlayPlacement)) ?? 0)
         }
     }
 
@@ -469,11 +481,14 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
 
     private func parse(_ f: NSTextField, _ old: Double) -> Double { Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) ?? old }
 
+    @objc private func cardOverrideToggled() { model.setSelectedCardOverride(cardOverrideCheck.state == .on) }
+
     @objc private func commit() {
         if model.activeTimeline == .locationCards, let card = model.selectedCardKeyValue {
             let t = parse(cardTimeField, card.time)
             cardTimeField.abortEditing()
-            model.editSelectedCardKey(time: t, placement: OverlayPlacement.allCases[max(cardPlacementPopup.indexOfSelectedItem, 0)])
+            let chosen = OverlayPlacement.allCases[max(cardPlacementPopup.indexOfSelectedItem, 0)]
+            model.editSelectedCardKey(time: t, placement: card.placement == nil ? nil : chosen)
             refresh()
             return
         }
