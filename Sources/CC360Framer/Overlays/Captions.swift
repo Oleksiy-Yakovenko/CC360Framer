@@ -146,30 +146,21 @@ enum CaptionOverlay {
     /// short side is `short` pixels (font pixel size = `style.size * short`, so it is drawn 1:1 into such a frame).
     static func image(text: String, style: CaptionStyle, short: CGFloat = referenceShort) -> CGImage? {
         let px = CGFloat(style.size) * short
-        let para = NSMutableParagraphStyle()
+        let align: OutlinedText.Align
         switch style.placement.anchor.x {
-        case -1: para.alignment = .left
-        case 1: para.alignment = .right
-        default: para.alignment = .center
+        case -1: align = .left
+        case 1: align = .right
+        default: align = .center
         }
-        var attrs: [NSAttributedString.Key: Any] = [.font: style.font(pixelSize: px), .paragraphStyle: para,
-                                                    .foregroundColor: style.fill.nsColor]
-        if style.strokeWidth > 0 {
-            attrs[.strokeColor] = style.stroke.nsColor
-            attrs[.strokeWidth] = -style.strokeWidth   // negative = stroke and fill; percent of the font size
-        }
-        let str = NSAttributedString(string: text, attributes: attrs)
-        let bounds = str.boundingRect(with: NSSize(width: 100_000, height: 100_000), options: [.usesLineFragmentOrigin])
-        let pad = ceil(px * 0.25)
-        let w = Int(ceil(bounds.width) + 2 * pad), h = Int(ceil(bounds.height) + 2 * pad)
-        guard w > 0, h > 0, w < 16000, h < 16000,
-              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
-        str.draw(with: NSRect(x: pad, y: pad, width: ceil(bounds.width), height: ceil(bounds.height)), options: [.usesLineFragmentOrigin])
-        NSGraphicsContext.restoreGraphicsState()
-        return ctx.makeImage()
+        let font = style.font(pixelSize: px)
+        let lines = text.components(separatedBy: .newlines).map { OutlinedText.Line(text: $0, font: font, fill: style.fill.nsColor) }
+        return OutlinedText.image(lines: lines, align: align, gap: 0, pad: ceil(px * 0.25), outline: outlineWidth(style, fontPixels: px),
+                                  stroke: style.stroke.nsColor)
+    }
+
+    /// Visible outer outline width in pixels: `strokeWidth` percent of the font size.
+    static func outlineWidth(_ style: CaptionStyle, fontPixels px: CGFloat) -> CGFloat {
+        CGFloat(max(style.strokeWidth, 0)) / 100 * px
     }
 }
 

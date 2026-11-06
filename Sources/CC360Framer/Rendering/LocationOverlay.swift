@@ -242,45 +242,14 @@ enum LocationOverlay {
         guard !lines.isEmpty else { return nil }
         let scale = max(scale, 0.01)
         let sizes = style.sizes(lineCount: lines.count).map { $0 * scale }
-        let attributed = zip(lines, sizes).enumerated().map { i, pair -> NSAttributedString in
+        let text = zip(lines, sizes).enumerated().map { i, pair -> OutlinedText.Line in
             let (line, size) = pair
-            let text = line.text
-            let font = style.font(size: size, bold: i == 0)
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
-            shadow.shadowBlurRadius = 8 * scale
-            shadow.shadowOffset = .zero
-            var attrs: [NSAttributedString.Key: Any] = [.font: font, .shadow: shadow,
-                .foregroundColor: style.fill.nsColor.withAlphaComponent(CGFloat(style.fill.a) * (line.detail ? 0.85 : 1))]
-            if style.strokeWidth > 0 {
-                attrs[.strokeColor] = style.stroke.nsColor
-                attrs[.strokeWidth] = -style.strokeWidth * scale / size * 100   // negative = stroke and fill
-            }
-            return NSAttributedString(string: text, attributes: attrs)
+            return OutlinedText.Line(text: line.text, font: style.font(size: size, bold: i == 0),
+                                     fill: style.fill.nsColor.withAlphaComponent(CGFloat(style.fill.a) * (line.detail ? 0.85 : 1)))
         }
-        let pad: CGFloat = 24 * scale, gap: CGFloat = 8 * scale
-        let widths = attributed.map { ceil($0.size().width) }
-        let heights = attributed.map { ceil($0.size().height) }
-        let w = Int((widths.max() ?? 1) + 2 * pad), h = Int(heights.reduce(0, +) + gap * CGFloat(max(attributed.count - 1, 0)) + 2 * pad)
-        guard w > 0, h > 0, let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                                space: CGColorSpaceCreateDeviceRGB(),
-                                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
-        let gc = NSGraphicsContext(cgContext: ctx, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = gc
-        var y = CGFloat(h) - pad
-        for (i, a) in attributed.enumerated() {
-            y -= heights[i]
-            let x: CGFloat
-            switch placement.anchor.x {
-            case -1: x = pad
-            case 0: x = (CGFloat(w) - widths[i]) / 2
-            default: x = CGFloat(w) - pad - widths[i]
-            }
-            a.draw(at: NSPoint(x: x, y: y))
-            y -= gap
-        }
-        NSGraphicsContext.restoreGraphicsState()
-        return ctx.makeImage()
+        let align: OutlinedText.Align = placement.anchor.x == -1 ? .left : placement.anchor.x == 0 ? .center : .right
+        return OutlinedText.image(lines: text, align: align, gap: 8 * scale, pad: 24 * scale, outline: CGFloat(max(style.strokeWidth, 0)) * scale,
+                                  stroke: style.stroke.nsColor,
+                                  shadow: OutlinedText.Shadow(color: NSColor.black.withAlphaComponent(0.8), blur: 8 * scale))
     }
 }
