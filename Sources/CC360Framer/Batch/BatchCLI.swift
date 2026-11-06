@@ -1,6 +1,6 @@
 import Foundation
 
-/// `--batch-run [--out DIR] [--force] [--no-export] [--style follow|scenery] [--settings JSON] FILE_OR_FOLDER...`
+/// `--batch-run [--out DIR] [--force] [--no-export] [--style follow|scenery] [--quality fast|medium|best] [--settings JSON] FILE_OR_FOLDER...`
 /// Runs the same engine as the batch window without UI. Settings are not saved. Exits 0 when every item succeeded.
 enum BatchCLI {
     static func run(args: [String]) -> Never {
@@ -15,6 +15,7 @@ enum BatchCLI {
             case "--force": settings.forceReanalyse = true
             case "--no-export": settings.export = false
             case "--style": settings.style = next() == "scenery" ? .scenery : .follow
+            case "--quality": settings.analysisQuality = next().flatMap { q in AnalysisQuality.allCases.first { $0.rawValue.lowercased().hasPrefix(q.lowercased()) } } ?? .fast
             case "--settings":
                 if let json = next(), let s = try? JSONDecoder().decode(ExportSettings.self, from: Data(json.utf8)) { settings.exportSettings = s }
             default: inputs.append(URL(fileURLWithPath: a))

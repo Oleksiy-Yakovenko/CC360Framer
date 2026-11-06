@@ -27,13 +27,11 @@ struct Observation: Codable {
     var salient: [Candidate]     // salient objects in the side views (no forward/back views)
 }
 
-/// Decodes both lens tracks at low resolution, projects eight views around the horizon for
+/// Decodes both lens tracks at low resolution, projects 8, 12 or 16 views (`AnalysisQuality`) around the horizon for
 /// every Nth frame, and records person detections plus salient objects on the sides.
 enum Analyzer {
     struct Failure: LocalizedError { let errorDescription: String? }
 
-    private static let viewCount = 8
-    private static let viewFov: Float = 90
     private static let viewSize = 512
 
     /// `step`: analyse every Nth decoded frame (6 ≈ 5 Hz at 30 fps).
@@ -41,7 +39,7 @@ enum Analyzer {
     /// covered) and the detections are converted back to body-frame directions, so stored observations
     /// do not depend on the stabilisation mode. `range` limits the pass (used for comparisons).
     static func run(asset: AVAsset, videoTracks: [AVAssetTrack], duration assetDuration: Double, step: Int = 6,
-                    stabilizer: Stabilizer? = nil, range: CMTimeRange? = nil,
+                    stabilizer: Stabilizer? = nil, range: CMTimeRange? = nil, quality: AnalysisQuality = .fast,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws -> [Observation] {
         guard videoTracks.count == 2, let device = MTLCreateSystemDefaultDevice() else {
             throw Failure(errorDescription: "Analysis needs a two-track 360 file.")
@@ -72,6 +70,8 @@ enum Analyzer {
         }
         _ = viewCV
 
+        let viewFov = quality.viewFov
+        let areaScale = quality.areaScale
         var observations: [Observation] = []
         var index = 0
         let duration = max(assetDuration, 0.001)
@@ -85,27 +85,27 @@ enum Analyzer {
             renderer.state.frameTime = t
 
             var obs = Observation(t: t, people: [], salient: [])
-            for v in 0..<viewCount {
-                let viewYaw = Float(v) * 2 * .pi / Float(viewCount)
+            for v in 0..<quality.viewCount {
+                let viewYaw = quality.viewYaw(v)
                 renderer.renderSync(to: viewTexture, yaw: viewYaw, pitch: 0, fov: viewFov)
                 let handler = VNImageRequestHandler(cvPixelBuffer: viewBuffer, options: [:])
                 let people = VNDetectHumanRectanglesRequest()
-                // Views straight ahead (0) and behind (4) are covered by the forward shot and the rider.
-                let sideView = v != 0 && v != viewCount / 2
+                // Views near straight ahead and behind are covered by the forward shot and the rider.
+                let sideView = quality.isSideView(v)
                 let objects = VNGenerateObjectnessBasedSaliencyImageRequest()
                 try? handler.perform(sideView ? [people, objects] : [people])
                 for o in people.results ?? [] {
                     // People cut by the view edge are seen better in the neighbouring view.
                     let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
-                    let area = Float(o.boundingBox.width * o.boundingBox.height) * Float(o.confidence) * (edge < 0.02 ? 0.5 : 1)
-                    obs.people.append(candidate(o.boundingBox, viewYaw: viewYaw, score: area, stabilizer: stabilizer, t: t))
+                    let area = Float(o.boundingBox.width * o.boundingBox.height) * areaScale * Float(o.confidence) * (edge < 0.02 ? 0.5 : 1)
+                    obs.people.append(candidate(o.boundingBox, viewYaw: viewYaw, score: area, viewFov: viewFov, stabilizer: stabilizer, t: t))
                 }
                 for o in objects.results?.first?.salientObjects ?? [] {
                     // Prefer mid-sized objects: tiny ones are noise, frame-filling ones are just the surroundings.
                     let area = Float(o.boundingBox.width * o.boundingBox.height)
                     let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
-                    let score = Float(o.confidence) * min(area * 4, 1) * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
-                    obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score, stabilizer: stabilizer, t: t))
+                    let score = Float(o.confidence) * min(area * 4, 1) * areaScale * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
+                    obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score, viewFov: viewFov, stabilizer: stabilizer, t: t))
                 }
             }
             observations.append(obs)
@@ -116,7 +116,7 @@ enum Analyzer {
     }
 
     /// Direction of a point in a rectilinear view (aspect 1) looking at `viewYaw`, pitch 0.
-    private static func direction(viewYaw: Float, ndcX: Float, ndcY: Float) -> (yaw: Float, pitch: Float) {
+    private static func direction(viewYaw: Float, viewFov: Float, ndcX: Float, ndcY: Float) -> (yaw: Float, pitch: Float) {
         let th = tan(viewFov * .pi / 360)
         let n = (ndcX * th * ndcX * th + ndcY * th * ndcY * th + 1).squareRoot()
         let d = SIMD3<Float>(ndcX * th / n, ndcY * th / n, 1 / n)
@@ -125,12 +125,12 @@ enum Analyzer {
         return (atan2(x, z), asin(max(-1, min(1, d.y))))
     }
 
-    private static func candidate(_ box: CGRect, viewYaw: Float, score: Float, stabilizer: Stabilizer?, t: Double) -> Candidate {
-        var d = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
+    private static func candidate(_ box: CGRect, viewYaw: Float, score: Float, viewFov: Float, stabilizer: Stabilizer?, t: Double) -> Candidate {
+        var d = direction(viewYaw: viewYaw, viewFov: viewFov, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
         if let stabilizer { d = stabilizer.toBody(yaw: d.yaw, pitch: d.pitch, at: t) }
         var corners: [Float] = []
         for (x, y) in [(box.minX, box.minY), (box.maxX, box.minY), (box.maxX, box.maxY), (box.minX, box.maxY)] {
-            var c = direction(viewYaw: viewYaw, ndcX: Float(x - 0.5) * 2, ndcY: Float(y - 0.5) * 2)
+            var c = direction(viewYaw: viewYaw, viewFov: viewFov, ndcX: Float(x - 0.5) * 2, ndcY: Float(y - 0.5) * 2)
             if let stabilizer { c = stabilizer.toBody(yaw: c.yaw, pitch: c.pitch, at: t) }
             // 4 decimals (~0.006 degrees) keep the sidecar small.
             corners += [(c.yaw * 10000).rounded() / 10000, (c.pitch * 10000).rounded() / 10000]

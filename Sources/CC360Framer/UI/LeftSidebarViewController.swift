@@ -9,6 +9,7 @@ final class LeftSidebarViewController: ModelViewController {
     private var buildButton = NSButton()
     private var reanalyseButton = NSButton()
     private let detectionsCheck = NSButton(checkboxWithTitle: "Display detected subjects", target: nil, action: nil)
+    private var qualityPopup = NSPopUpButton()
     private var stylePopup = NSPopUpButton()
     private var stabilizePopup = NSPopUpButton()
 
@@ -30,6 +31,7 @@ final class LeftSidebarViewController: ModelViewController {
         buildButton = Kit.button("Build path", tip: "Regenerate the path in this style (replaces keyframes)", target: self, action: #selector(buildPath))
         reanalyseButton = Kit.button("Re-analyse", tip: "Run the detection again", target: self, action: #selector(confirmReanalyse))
 
+        qualityPopup = Kit.popup(AnalysisQuality.allCases.map(\.rawValue), tip: AnalysisQuality.popupTip, target: self, action: #selector(qualityChosen))
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "How the camera path is generated", target: self, action: #selector(styleChosen))
         stabilizePopup = Kit.popup(StabilizeMode.allCases.map(\.rawValue), tip: "Horizon lock and shake removal from the camera's motion data", target: self, action: #selector(stabilizeChosen))
 
@@ -44,11 +46,12 @@ final class LeftSidebarViewController: ModelViewController {
 
         let stack = Kit.sidebarStack(in: view, [
             autoTitle, autoButton,
-            analysisTitle, progress, cancelButton, analyseButton, buildButton, reanalyseButton, detectionsCheck,
+            analysisTitle, qualityPopup, progress, cancelButton, analyseButton, buildButton, reanalyseButton, detectionsCheck,
             pathTitle, stylePopup,
             stabTitle, stabilizePopup,
         ])
         for v in [autoButton, reanalyseButton, detectionsCheck, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
+        stack.setCustomSpacing(6, after: qualityPopup)
         stack.setCustomSpacing(18, after: analyseButton)
         stack.setCustomSpacing(18, after: buildButton)
         stack.setCustomSpacing(18, after: cancelButton)
@@ -70,6 +73,8 @@ final class LeftSidebarViewController: ModelViewController {
         detectionsCheck.state = model.showDetections ? .on : .off
         detectionsCheck.isEnabled = analysed
 
+        qualityPopup.selectItem(at: AnalysisQuality.allCases.firstIndex(of: model.analysisQuality) ?? 0)
+        qualityPopup.isEnabled = busy == nil
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: model.style) ?? 0)
         stabilizePopup.selectItem(at: StabilizeMode.allCases.firstIndex(of: model.stabilization) ?? 0)
     }
@@ -90,6 +95,10 @@ final class LeftSidebarViewController: ModelViewController {
         alert.beginSheetModal(for: window) { [weak self] response in
             if response == .alertFirstButtonReturn { self?.model.analyze() }
         }
+    }
+
+    @objc private func qualityChosen() {
+        model.analysisQuality = AnalysisQuality.allCases[max(qualityPopup.indexOfSelectedItem, 0)]
     }
 
     @objc private func styleChosen() {

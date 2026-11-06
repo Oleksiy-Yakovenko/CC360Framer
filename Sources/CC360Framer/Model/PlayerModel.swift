@@ -135,6 +135,10 @@ final class PlayerModel: ObservableObject {
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
     @Published var statusText: String?
+    /// App default: how many views the analysis uses (`AnalysisQuality`). Applies to the next analysis.
+    @Published var analysisQuality = AnalysisQuality(stored: UserDefaults.standard.string(forKey: AnalysisQuality.defaultsKey)) {
+        didSet { UserDefaults.standard.set(analysisQuality.rawValue, forKey: AnalysisQuality.defaultsKey) }
+    }
     @Published var style: PathStyle = PathStyle(rawValue: UserDefaults.standard.string(forKey: "pathStyle") ?? "") ?? .follow {
         didSet { UserDefaults.standard.set(style.rawValue, forKey: "pathStyle") }
     }
@@ -665,10 +669,11 @@ extension PlayerModel {
         analysisProgress = 0
         statusText = "Analysing…"
         let assetDuration = duration
+        let quality = analysisQuality
         let box = UncheckedBox((asset, tracks, stabilizer))
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, duration: assetDuration, stabilizer: box.value.2, progress: { p in
+                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, duration: assetDuration, stabilizer: box.value.2, quality: quality, progress: { p in
                     Task { @MainActor in self?.analysisProgress = p }
                 }, cancel: flag)
                 await MainActor.run {

@@ -24,6 +24,7 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
     private let forceCheck = NSButton(checkboxWithTitle: "Force re-analyse", target: nil, action: nil)
     private let exportCheck = NSButton(checkboxWithTitle: "Export", target: nil, action: nil)
     private var stylePopup = NSPopUpButton()
+    private var qualityPopup = NSPopUpButton()
     private let folderButton = NSButton()
     private let folderLabel = NSTextField(labelWithString: "")
     private let settingsView = ExportSettingsView()
@@ -114,6 +115,7 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         forceCheck.toolTip = "Analyse every file again and rebuild its camera path, replacing existing keyframes. Off: files with an analysis keep it (and their keyframes, also hand-edited ones); files without one are analysed."
         exportCheck.target = self; exportCheck.action = #selector(optionsChanged)
         exportCheck.toolTip = "Export a video for every file. Off: only analyse and build the camera path (keyframes are saved next to each video)."
+        qualityPopup = Kit.popup(AnalysisQuality.allCases.map(\.rawValue), tip: AnalysisQuality.popupTip, target: self, action: #selector(optionsChanged))
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "Camera path style used when a path is built", target: self, action: #selector(optionsChanged))
         folderButton.title = "Choose…"
         folderButton.bezelStyle = .rounded
@@ -133,6 +135,7 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
             Kit.grid([
                 Kit.checkRow(forceCheck),
                 Kit.checkRow(exportCheck),
+                Kit.row("Quality", qualityPopup, tip: AnalysisQuality.popupTip),
                 Kit.row("Path style", stylePopup, tip: "Camera path style"),
                 Kit.row("Output", folderRow, tip: "Output folder for the exported videos"),
             ]),
@@ -174,6 +177,7 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         forceCheck.state = s.forceReanalyse ? .on : .off
         exportCheck.state = s.export ? .on : .off
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: s.style) ?? 0)
+        qualityPopup.selectItem(at: AnalysisQuality.allCases.firstIndex(of: s.analysisQuality) ?? 0)
         folderButton.isEnabled = s.export
         folderLabel.stringValue = s.outputFolder?.path ?? (s.export ? "Not chosen" : "")
         folderLabel.textColor = s.export && s.outputFolder == nil ? .systemRed : .labelColor
@@ -216,6 +220,7 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
     @objc private func optionsChanged() {
         runner.settings.forceReanalyse = forceCheck.state == .on
         runner.settings.export = exportCheck.state == .on
+        runner.settings.analysisQuality = AnalysisQuality.allCases[max(qualityPopup.indexOfSelectedItem, 0)]
         runner.settings.style = PathStyle.allCases[max(stylePopup.indexOfSelectedItem, 0)]
     }
 

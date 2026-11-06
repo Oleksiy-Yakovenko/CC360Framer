@@ -8,6 +8,7 @@ enum BatchJob {
         var forceReanalyse = false
         var export = true
         var style: PathStyle = .follow
+        var analysisQuality: AnalysisQuality = .fast
         var exportSettings = ExportSettings()
     }
 
@@ -47,7 +48,7 @@ enum BatchJob {
             progress(.analysing(0))
             let box = UncheckedBox((session.asset, session.videoTracks, stabilizer))
             observations = try await Task.detached(priority: .utility) {
-                try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, duration: duration, stabilizer: box.value.2,
+                try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, duration: duration, stabilizer: box.value.2, quality: options.analysisQuality,
                                  progress: { progress(.analysing($0)) }, cancel: cancel)
             }.value
             analysed = true
