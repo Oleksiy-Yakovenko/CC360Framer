@@ -58,8 +58,11 @@ final class Stabilizer {
         let q: [simd_quatf] = telemetry.orientation.prefix(n).map {
             simd_normalize(simd_quatf(ix: det * $0.y * map.x, iy: det * $0.z * map.y, iz: det * $0.w * map.z, r: $0.x))
         }
-        var up: [SIMD3<Float>] = (0..<n).map { i in
-            simd_normalize(rawUp[max(i - 1, 0)] + 2 * rawUp[i] + rawUp[min(i + 1, n - 1)])
+        var up: [SIMD3<Float>] = (0..<n).map { (i: Int) -> SIMD3<Float> in
+            let prev: SIMD3<Float> = rawUp[max(i - 1, 0)]
+            let next: SIMD3<Float> = rawUp[min(i + 1, n - 1)]
+            let sum: SIMD3<Float> = prev + rawUp[i] * 2 + next
+            return simd_normalize(sum)
         }
         if Self.upSource == .orientation {
             // Gravity expressed in the start frame is constant for a rigid world: average it over seconds,
@@ -69,7 +72,10 @@ final class Stabilizer {
             let wx = Gaussian.smooth(world.map { $0.x }, sigma: sigma)
             let wy = Gaussian.smooth(world.map { $0.y }, sigma: sigma)
             let wz = Gaussian.smooth(world.map { $0.z }, sigma: sigma)
-            up = (0..<n).map { i in simd_normalize(q[i].act(simd_normalize(SIMD3(wx[i], wy[i], wz[i])))) }
+            up = (0..<n).map { (i: Int) -> SIMD3<Float> in
+                let dir: SIMD3<Float> = simd_normalize(SIMD3<Float>(wx[i], wy[i], wz[i]))
+                return simd_normalize(q[i].act(dir))
+            }
         }
 
         var headings = [SIMD3<Float>](repeating: [0, 0, 1], count: n)
