@@ -29,6 +29,7 @@ final class PlayerViewController: ModelViewController {
         Kit.pin(look, to: container)
         let overlay = DetectionsOverlayView()
         overlay.model = model
+        overlay.clipsToBounds = true   // macOS 14+ does not clip subviews by default: boxes reaching past the video edge would leak over the views below
         Kit.pin(overlay, to: container)
         detectionsOverlay = overlay
         renderer.onFrame = { [weak overlay] in MainActor.assumeIsolated { overlay?.frameChanged() } }
@@ -87,6 +88,7 @@ final class DetectionsOverlayView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard !shapes.isEmpty, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.clip(to: bounds)
         ctx.setLineWidth(2)
         ctx.setLineJoin(.round)
         func screen(_ p: SIMD2<Float>) -> CGPoint {
