@@ -21,6 +21,7 @@ final class DropSplitView: NSSplitView {
 }
 
 /// Preview, playback controls and keyframe buttons stacked in the middle pane.
+/// Its view is pinned below the toolbar by `SidebarLayout.addContent`, so it needs no safe-area handling itself.
 final class CenterViewController: NSViewController {
     let player: PlayerViewController
     let transport: TransportViewController
@@ -47,8 +48,7 @@ final class CenterViewController: NSViewController {
             v.setContentHuggingPriority(.required, for: .vertical)
             v.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        // The stack sits in the safe area, so the player starts right below the unified toolbar (which keeps its normal
-        // window material). The black backdrop covers only the player; the controls below keep the window background.
+        // The black backdrop covers only the player; the controls below keep the window background.
         let container = NSView()
         let backdrop = NSView()
         backdrop.wantsLayer = true
@@ -57,13 +57,12 @@ final class CenterViewController: NSViewController {
         container.addSubview(backdrop)
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
-        let safe = container.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: safe.topAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            backdrop.topAnchor.constraint(equalTo: safe.topAnchor),
+            backdrop.topAnchor.constraint(equalTo: container.topAnchor),
             backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             backdrop.bottomAnchor.constraint(equalTo: player.view.bottomAnchor),
@@ -72,18 +71,112 @@ final class CenterViewController: NSViewController {
     }
 }
 
+/// Plain view painted with the window background (the sidebars' wrappers).
+final class WindowColoredView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.set()
+        dirtyRect.fill()
+    }
+}
+
+/// Window layout shared with the PCBDesigner project: the split view fills the whole content view and every pane is
+/// wrapped by a view controller whose child is pinned to the window's content layout guide (the area below the
+/// unified toolbar). Nothing then extends under the toolbar and the toolbar sections line up with the panes.
+@MainActor
+enum SidebarLayout {
+    private static func topLayoutGuide(of window: NSWindow) -> NSLayoutAnchor<NSLayoutYAxisAnchor>? {
+        (window.contentLayoutGuide as? NSObject)?.value(forKey: "topAnchor") as? NSLayoutAnchor<NSLayoutYAxisAnchor>
+    }
+
+    static func makeSplitView(onDrop: @escaping ([URL]) -> Void) -> DropSplitView {
+        let splitView = DropSplitView()
+        splitView.dividerStyle = .thin
+        splitView.isVertical = true
+        splitView.onDrop = onDrop
+        return splitView
+    }
+
+    /// Central item. The wrapper is needed for constraints purposes.
+    static func contentItem(_ vc: NSViewController, to split: NSSplitViewController, window: NSWindow) -> NSSplitViewItem {
+        let wrapper = NSViewController()
+        wrapper.view = NSView()
+        wrapper.addChild(vc)
+        wrapper.view.addSubview(vc.view)
+        let item = NSSplitViewItem(viewController: wrapper)
+        item.minimumThickness = 420
+        split.addSplitViewItem(item)
+        vc.view.translatesAutoresizingMaskIntoConstraints = false
+        var constraints = [
+            vc.view.leadingAnchor.constraint(equalTo: wrapper.view.leadingAnchor),
+            vc.view.trailingAnchor.constraint(equalTo: wrapper.view.trailingAnchor),
+            vc.view.bottomAnchor.constraint(equalTo: wrapper.view.bottomAnchor),
+        ]
+        constraints.append(topLayoutGuide(of: window).map { vc.view.topAnchor.constraint(equalTo: $0) }
+                           ?? vc.view.topAnchor.constraint(equalTo: wrapper.view.topAnchor))
+        NSLayoutConstraint.activate(constraints)
+        return item
+    }
+
+    /// Sidebar or inspector item. The content's own 12 pt inset stays the only inset: the child starts exactly at the
+    /// content layout guide, so its safe area top is zero.
+    static func sidebarItem(_ vc: NSViewController, inspector: Bool, min: CGFloat, max: CGFloat,
+                            to split: NSSplitViewController, window: NSWindow) -> NSSplitViewItem {
+        let wrapper = NSViewController(nibName: nil, bundle: nil)
+        wrapper.view = WindowColoredView()
+        wrapper.addChild(vc)
+        wrapper.view.addSubview(vc.view)
+        let item = inspector ? NSSplitViewItem(inspectorWithViewController: wrapper)
+                             : NSSplitViewItem(sidebarWithViewController: wrapper)
+        item.minimumThickness = min
+        item.maximumThickness = max
+        split.addSplitViewItem(item)
+        vc.view.translatesAutoresizingMaskIntoConstraints = false
+        var constraints = [
+            vc.view.leadingAnchor.constraint(equalTo: wrapper.view.leadingAnchor),
+            vc.view.trailingAnchor.constraint(equalTo: wrapper.view.trailingAnchor),
+            vc.view.bottomAnchor.constraint(equalTo: wrapper.view.bottomAnchor),
+        ]
+        constraints.append(topLayoutGuide(of: window).map { vc.view.topAnchor.constraint(equalTo: $0) }
+                           ?? vc.view.topAnchor.constraint(equalTo: wrapper.view.topAnchor))
+        NSLayoutConstraint.activate(constraints)
+        return item
+    }
+
+    /// Fills the window with the split view and applies the toolbar style.
+    static func install(_ splitView: NSSplitView, in window: NSWindow, toolbar: NSToolbar) {
+        guard let view = window.contentView else { fatalError("Window doesn't have a content view") }
+        window.toolbar = toolbar
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
+        view.addSubview(splitView)
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: view.topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+}
+
 private extension NSToolbarItem.Identifier {
+    static let toggleLeft = NSToolbarItem.Identifier("toggleLeft")
     static let appTitle = NSToolbarItem.Identifier("appTitle")
     static let export = NSToolbarItem.Identifier("export")
     static let batch = NSToolbarItem.Identifier("batch")
+    static let leftSeparator = NSToolbarItem.Identifier("leftSeparator")
+    static let rightSeparator = NSToolbarItem.Identifier("rightSeparator")
     static let inspector = NSToolbarItem.Identifier("inspector")
 }
 
-/// Main view controller: the left sidebar | preview column | right sidebar split view and the window toolbar.
+/// Main view controller: the left sidebar | preview column | right inspector split view and the window toolbar.
+/// Its view is not the window's content view controller's view; `install(in:)` puts the split view into the window.
 final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     let model: PlayerModel
     let center: CenterViewController
-    private let inspectorItem: NSSplitViewItem
+    private let dropSplitView: DropSplitView
+    private var leftItem: NSSplitViewItem?
+    private var inspectorItem: NSSplitViewItem?
     private var exportItem: NSToolbarItem?
     private var bag = Set<AnyCancellable>()
     /// Called with every file dropped on the window; set by the window controller.
@@ -92,48 +185,39 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     init(model: PlayerModel) {
         self.model = model
         center = CenterViewController(model: model)
-        let left = NSSplitViewItem(sidebarWithViewController: LeftSidebarViewController(model: model))
-        left.minimumThickness = 200
-        left.maximumThickness = 400
-        let middle = NSSplitViewItem(viewController: center)
-        middle.minimumThickness = 420
-        // Let AppKit draw the toolbar sections and separators; the centre item adds no drawing of its own.
-        middle.titlebarSeparatorStyle = .automatic
-        if #available(macOS 26.0, *) { middle.automaticallyAdjustsSafeAreaInsets = true }
-        left.titlebarSeparatorStyle = .automatic
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: RightSidebarViewController(model: model))
-        inspectorItem.minimumThickness = 280
-        inspectorItem.maximumThickness = 360
-        inspectorItem.titlebarSeparatorStyle = .automatic
+        var drop: (([URL]) -> Void)?
+        dropSplitView = SidebarLayout.makeSplitView { drop?($0) }
         super.init(nibName: nil, bundle: nil)
-        let split = DropSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.autosaveName = "MainSplit"
-        split.onDrop = { [weak self] urls in self?.openURLs?(urls) }
-        splitView = split
-        addSplitViewItem(left)
-        addSplitViewItem(middle)
-        addSplitViewItem(inspectorItem)
+        drop = { [weak self] urls in self?.openURLs?(urls) }
+        splitView = dropSplitView
+        view = dropSplitView
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
+    /// Builds the panes, puts the split view into the window and sets the default divider positions.
+    /// The window must already have its final size and toolbar delegate (`makeToolbar`) available.
+    func install(in window: NSWindow) {
+        SidebarLayout.install(dropSplitView, in: window, toolbar: makeToolbar())
+        leftItem = SidebarLayout.sidebarItem(LeftSidebarViewController(model: model), inspector: false, min: 200, max: 400,
+                                             to: self, window: window)
+        _ = SidebarLayout.contentItem(center, to: self, window: window)
+        inspectorItem = SidebarLayout.sidebarItem(RightSidebarViewController(model: model), inspector: true, min: 280, max: 600,
+                                                  to: self, window: window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        dropSplitView.setPosition(260, ofDividerAt: 0)
+        dropSplitView.setPosition(dropSplitView.bounds.width - 320, ofDividerAt: 1)
+
         model.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.updateToolbar() } }
             .store(in: &bag)
-    }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
         // Menu shortcuts and mouse look need the preview to be the first responder.
-        view.window?.makeFirstResponder(center.player.lookView)
+        window.makeFirstResponder(center.player.lookView)
     }
 
-    func toggleInspector() { inspectorItem.animator().isCollapsed.toggle() }
+    func toggleInspector() { inspectorItem?.animator().isCollapsed.toggle() }
+    @objc func toggleLeft(_ sender: Any?) { leftItem?.animator().isCollapsed.toggle() }
 
     // MARK: Toolbar
 
@@ -141,12 +225,14 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         let toolbar = NSToolbar(identifier: "MainToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
         return toolbar
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // The separators follow the split view dividers, so the items sit above the pane they belong to.
-        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .batch, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, .inspector]
+        // The tracking separators follow the split view dividers, so the items sit above the pane they belong to.
+        [.toggleLeft, .leftSeparator, .appTitle, .export, .batch, .flexibleSpace, .rightSeparator, .flexibleSpace, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -156,6 +242,12 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar: Bool) -> NSToolbarItem? {
         let delegate = NSApp.delegate
         switch id {
+        case .leftSeparator:
+            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: dropSplitView, dividerIndex: 0)
+        case .rightSeparator:
+            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: dropSplitView, dividerIndex: 1)
+        case .toggleLeft:
+            return button(id, "Sidebar", "sidebar.left", "Show or hide the left sidebar", delegate, #selector(AppDelegate.toggleSidebar))
         case .appTitle:
             let item = NSToolbarItem(itemIdentifier: id)
             item.view = Kit.title("CC360Framer")

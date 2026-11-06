@@ -21,14 +21,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
                               backing: .buffered, defer: false)
         super.init(window: window)
         window.isReleasedWhenClosed = false
-        window.contentViewController = main
         window.delegate = self
         window.setContentSize(NSSize(width: 1280, height: 800))
         window.contentMinSize = NSSize(width: 900, height: 520)
         window.title = "CC360Framer"
         window.titleVisibility = .hidden
-        window.toolbarStyle = .unified
-        window.toolbar = main.makeToolbar()
         if autosave {
             if !window.setFrameUsingName("MainWindow") { window.center() }
             window.setFrameAutosaveName("MainWindow")
@@ -38,6 +35,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         } else {
             window.center()
         }
+        main.install(in: window)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
