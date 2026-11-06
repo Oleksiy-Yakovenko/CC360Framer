@@ -8,6 +8,7 @@ Build instructions (command line and Xcode), usage and all command-line tools / 
 Notes for working here:
 - Headless/CLI modes only worked reliably through the built `.app` binary (`CC360Framer.app/Contents/MacOS/CC360Framer`). A `.build/debug` run from a sandboxed shell printed nothing; if a batch run is silent, retry with the sandbox disabled.
 - Commits end with the `Co-Authored-By` line given by the session. `.gitignore` excludes `.build/`, `*.app`, `*.360`, `*.reframe.json`, `*.analysis.json`, `*.location.json`.
+- Never do direct UI testing, inspection, accessibility testing or debugging of the running app (launching it to look at windows, screenshots, UI scripting, accessibility inspection). Only do it when the user explicitly asks. Verify with `swift test` and the headless CLI tools in `README.md` instead.
 - Never write into the user's footage folder (`~/Movies/GoPro/...`); symlink the video and copy sidecars into the scratchpad.
 
 ## Architecture (`Sources/CC360Framer/`)
