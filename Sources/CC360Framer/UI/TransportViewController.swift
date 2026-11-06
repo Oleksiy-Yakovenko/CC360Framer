@@ -90,6 +90,7 @@ final class TimelineMarkersView: NSView {
 /// Play button, position, seekbar with the active timeline's markers, duration.
 final class TransportViewController: ModelViewController {
     private var playButton = NSButton()
+    private var recordButton = NSButton()
     private let positionLabel = NSTextField(labelWithString: "0:00")
     private let durationLabel = NSTextField(labelWithString: "0:00")
     private let slider = ScrubSlider()
@@ -100,6 +101,11 @@ final class TransportViewController: ModelViewController {
         view = NSView()
         playButton = Kit.symbolButton("play.fill", tip: "Play / pause (space)", target: self, action: #selector(togglePlay))
         playButton.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        recordButton = Kit.symbolButton("record.circle", tip: "Record camera moves: while on, dragging and zooming the preview adds keyframes",
+                                        target: self, action: #selector(toggleRecord))
+        recordButton.setButtonType(.pushOnPushOff)
+        recordButton.contentTintColor = .systemRed
+        recordButton.widthAnchor.constraint(equalToConstant: 36).isActive = true
         for l in [positionLabel, durationLabel] {
             l.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
@@ -120,7 +126,7 @@ final class TransportViewController: ModelViewController {
 
         // The strip is not part of the row, so the play button and labels stay centred on the slider; its edges are
         // pinned to the slider's, so times map to the same x as the thumb.
-        let row = NSStackView(views: [playButton, positionLabel, slider, durationLabel])
+        let row = NSStackView(views: [playButton, recordButton, positionLabel, slider, durationLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
@@ -142,6 +148,9 @@ final class TransportViewController: ModelViewController {
 
     override func refresh() {
         playButton.image = Kit.symbol(model.isPlaying ? "pause.fill" : "play.fill", "Play / pause")
+        recordButton.image = Kit.symbol(model.isRecording ? "record.circle.fill" : "record.circle", "Record camera moves")
+        recordButton.state = model.isRecording ? .on : .off
+        recordButton.isEnabled = model.duration > 0
         positionLabel.stringValue = Kit.time(model.position)
         durationLabel.stringValue = Kit.time(model.duration)
         slider.maxValue = max(model.duration, 0.1)
@@ -155,5 +164,6 @@ final class TransportViewController: ModelViewController {
     }
 
     @objc private func togglePlay() { model.togglePlay() }
+    @objc private func toggleRecord() { model.toggleRecording() }
     @objc private func scrubbed() { model.scrub(to: slider.doubleValue) }
 }

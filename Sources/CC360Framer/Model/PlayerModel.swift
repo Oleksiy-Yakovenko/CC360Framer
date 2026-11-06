@@ -128,6 +128,11 @@ final class PlayerModel: ObservableObject {
     private lazy var fallbackUndoManager = UndoManager()
     var undoManager: UndoManager { undoManagerProvider() ?? fallbackUndoManager }
     @Published var autoFollow = false
+    /// Record mode (red dot button next to Play): camera gestures in the preview add keyframes. Not persisted.
+    @Published var isRecording = false
+    private var recording: RecordingSession?
+    private var recordTimer: Timer?
+    private var recordIdleTask: Task<Void, Never>?
     /// Preview only: outline the detected subjects of the nearest analysed frame. App-wide default (`showDetections`).
     @Published var showDetections = UserDefaults.standard.bool(forKey: "showDetections") {
         didSet { UserDefaults.standard.set(showDetections, forKey: "showDetections") }
@@ -441,6 +446,8 @@ final class PlayerModel: ObservableObject {
             self.position = 0
             self.title = url.lastPathComponent
             installObservers(item)
+            cancelRecording()
+            isRecording = false
             viewState.reset()
             viewState.onUserDrag = { [weak self] in
                 MainActor.assumeIsolated { self?.noteUserDrag() }
@@ -448,6 +455,7 @@ final class PlayerModel: ObservableObject {
             viewState.onUserLook = { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    if self.isRecording || self.recording != nil { self.noteRecordingLook(); return }
                     if self.autoFollow && !self.keyframes.isEmpty {
                         self.statusText = "Auto off: you moved the view. Press Auto to follow the keyframes."
                     }
@@ -650,6 +658,66 @@ extension PlayerModel {
         autoFollow = true
         keysEdited = true
         saveKeyframes()
+    }
+
+    // MARK: Record mode
+
+    /// A gesture counts as finished when no look event has arrived for this long.
+    static let recordIdleDelay = 0.4
+
+    func toggleRecording() {
+        guard item != nil else { return }
+        isRecording.toggle()   // a running gesture finishes normally
+    }
+
+    private var currentRecordView: RecordingSession.View {
+        .init(yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
+    }
+
+    /// Called by the look handler BEFORE the event changes the view.
+    private func noteRecordingLook() {
+        if recording == nil {
+            recording = RecordingSession(time: viewState.frameTime, view: currentRecordView)
+            autoFollow = false   // the path must not pull the view back during the gesture
+            let t = Timer(timeInterval: RecordingSession.interval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.recording != nil else { return }
+                    _ = self.recording?.sample(time: self.viewState.frameTime, view: self.currentRecordView)
+                }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            recordTimer = t
+        }
+        recordIdleTask?.cancel()
+        recordIdleTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.recordIdleDelay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.finishRecording()
+        }
+    }
+
+    private func finishRecording() {
+        recordTimer?.invalidate(); recordTimer = nil
+        recordIdleTask?.cancel(); recordIdleTask = nil
+        guard var session = recording else { return }
+        recording = nil
+        let merged = session.end(time: viewState.frameTime, view: currentRecordView, keys: keyframes)
+        undo.perform("Record Camera") {
+            keyframes = merged
+            if let s = selectedKey, !merged.contains(where: { $0.id == s }) { selectedKey = nil }
+            keysEdited = true
+            saveKeyframes()
+        }
+        autoFollow = true
+        let n = session.recorded.count
+        statusText = "Recorded \(n) keyframe\(n == 1 ? "" : "s")"
+    }
+
+    /// Drops a running gesture without touching the keyframes (file opened/closed).
+    private func cancelRecording() {
+        recordTimer?.invalidate(); recordTimer = nil
+        recordIdleTask?.cancel(); recordIdleTask = nil
+        recording = nil
     }
 
     func select(_ key: Keyframe) {
