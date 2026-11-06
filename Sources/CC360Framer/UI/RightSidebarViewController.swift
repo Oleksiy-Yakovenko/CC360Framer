@@ -1,13 +1,13 @@
 import AVFoundation
 import AppKit
 
-/// Right sidebar: tabs for the document, location card, keyframe inspector, audio tracks and export.
+/// Right sidebar: tabs for the keyframe inspector, location card, audio tracks, document and export.
 final class RightSidebarViewController: ModelViewController {
     private lazy var tabs: [(title: String, symbol: String, tip: String, vc: ModelViewController)] = [
-        ("Document", "doc", "Document", DocumentTabViewController(model: model)),
-        ("Location", "mappin.and.ellipse", "Location Card Settings", LocationTabViewController(model: model)),
         ("Inspector", "slider.horizontal.3", "Inspector", InspectorTabViewController(model: model)),
+        ("Location", "mappin.and.ellipse", "Location Card Settings", LocationTabViewController(model: model)),
         ("Audio", "speaker.wave.2", "Audio", AudioTabViewController(model: model)),
+        ("Document", "doc", "Document", DocumentTabViewController(model: model)),
         ("Export", "arrow.up.circle.fill", "Export Settings", ExportTabViewController(model: model)),
     ]
 
