@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcbeautify
+        run: command -v xcbeautify >/dev/null || brew install xcbeautify
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      # Each step writes the full xcodebuild output to logs/ and shows the
+      # xcbeautify-filtered version in the job log. pipefail keeps xcodebuild's
+      # exit status.
+      - name: Build
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          xcodebuild build -scheme CC360Framer -destination 'platform=macOS' \
+            -derivedDataPath .derived 2>&1 | tee logs/build.log | xcbeautify --renderer github-actions
+
+      - name: Analyze
+        run: |
+          set -o pipefail
+          xcodebuild analyze -scheme CC360Framer -destination 'platform=macOS' \
+            -derivedDataPath .derived 2>&1 | tee logs/analyze.log | xcbeautify --renderer github-actions
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test -scheme CC360Framer -destination 'platform=macOS' \
+            -derivedDataPath .derived 2>&1 | tee logs/test.log | xcbeautify --renderer github-actions
+
+      - name: Package app
+        run: |
+          set -o pipefail
+          ./build.sh 2>&1 | tee logs/package.log | xcbeautify --renderer github-actions
+          ditto -c -k --sequesterRsrc --keepParent CC360Framer.app CC360Framer.zip
+
+      - name: Upload unfiltered logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: logs/
+          if-no-files-found: warn
+
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: CC360Framer-app
+          path: CC360Framer.zip
+          if-no-files-found: error
