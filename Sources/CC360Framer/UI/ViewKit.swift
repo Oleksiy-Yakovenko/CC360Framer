@@ -113,15 +113,16 @@ enum Kit {
         return w
     }
 
-    /// Editable combo box with preset sizes: pick one or type any number (see `SizeInput`); the action fires on selection and Return.
+    /// Editable combo box with preset sizes: pick one or type any number (see `SizeInput`); the action fires on selection, Return and leaving the field.
     static func sizeCombo(presets: [Double], tip: String, target: AnyObject, action: Selector) -> NSComboBox {
-        let c = NSComboBox()
+        let c = SizeComboBox()
         c.addItems(withObjectValues: presets.map(SizeInput.format))
         c.numberOfVisibleItems = presets.count
         c.completes = false
         c.toolTip = tip
         c.target = target
         c.action = action
+        c.delegate = c
         c.widthAnchor.constraint(equalToConstant: 84).isActive = true
         return c
     }
@@ -132,11 +133,35 @@ enum Kit {
     }
 
     /// The size picked or typed in the combo box, clamped; unparsable text goes back to `current` (and is shown again).
+    /// Never trusts `indexOfSelectedItem`: it stays on the last preset after a non-preset value is typed.
     static func readSize(_ c: NSComboBox, range: ClosedRange<Double>, step: Double = 1, current: Double) -> Double {
-        let text = c.indexOfSelectedItem >= 0 ? (c.objectValueOfSelectedItem as? String ?? c.stringValue) : c.stringValue
+        let picked = (c as? SizeComboBox)?.takePick()
+        let text = SizeInput.chosenText(pickedItem: picked, editorText: (c.currentEditor() as? NSText)?.string, stringValue: c.stringValue)
         let v = SizeInput.parse(text, range: range, step: step) ?? current
         c.stringValue = SizeInput.format(v)
         return v
+    }
+
+    /// Size combo box that remembers a list pick (the selection notification arrives before the text field is updated) and
+    /// fires its action when editing ends (tabbing away does not always send it).
+    @MainActor
+    final class SizeComboBox: NSComboBox, NSComboBoxDelegate {
+        private var pick: String?
+        func takePick() -> String? { defer { pick = nil }; return pick }
+
+        func comboBoxSelectionDidChange(_ notification: Notification) {
+            pick = objectValueOfSelectedItem as? String
+            // The control sends its action itself; if it did not consume the pick by the next turn, send it.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pick != nil, let action = self.action else { return }
+                self.sendAction(action, to: self.target)
+            }
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard pick == nil, let action else { return }
+            sendAction(action, to: target)   // a no-op downstream when the value did not change
+        }
     }
 
     /// Popup listing the installed font families; the represented object of each item is the family name.

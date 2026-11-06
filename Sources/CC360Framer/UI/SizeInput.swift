@@ -18,4 +18,12 @@ enum SizeInput {
     static func format(_ v: Double) -> String {
         v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
+
+    /// Which text of an editable combo box is the user's choice. A list pick (`pickedItem`, reported by the selection
+    /// notification) wins; otherwise the text being edited (`editorText`) or the field value (`stringValue`). The selected
+    /// item's index is deliberately ignored: it goes stale when the user types a value that is not a preset, and reading
+    /// it then silently restores the old preset (the "size is ignored" bug).
+    static func chosenText(pickedItem: String?, editorText: String?, stringValue: String) -> String {
+        pickedItem ?? editorText ?? stringValue
+    }
 }

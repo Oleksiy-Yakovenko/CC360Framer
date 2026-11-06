@@ -251,4 +251,26 @@ final class OverlayPlanTests: XCTestCase {
         let plan = OverlayPlan(captions: [Caption(start: 0, end: 1, text: "x")])
         XCTAssertEqual(OverlayBundle.make(place: nil, plan: plan, style: LocationCardStyle(), targetShort: 720).targetShort, 720)
     }
+
+    /// The card's pixel height through the whole path (card keyframe, bundle, plan, layout) is proportional to baseSize.
+    func testCardKeyframeHeightScalesWithBaseSize() {
+        let info = PlaceInfo(latitude: 55, longitude: 12, country: "Denmark", altitude: 5, city: "Copenhagen", street: "Nyhavn", houseNumber: "7")
+        var plan = OverlayPlan()
+        plan.hasPlace = true
+        plan.autoCard = false
+        plan.cardKeys = [LocationCardKey(time: 90, placement: .topCenter)]
+        func height(_ base: Double, short: Int = 1080) -> Float {
+            let b = OverlayBundle.make(place: info, plan: plan, style: LocationCardStyle(baseSize: base), targetShort: short)
+            let d = plan.draws(at: 92, builtShort: b.targetShort)
+            XCTAssertEqual(d.count, 1)
+            let img = b.images[d[0].key]!
+            let r = OverlayLayout.rect(texWidth: img.width, texHeight: img.height, targetWidth: Float(short) * 16 / 9, targetHeight: Float(short),
+                                       placement: d[0].placement, size: d[0].size)
+            return (r.y1 - r.y0) / 2 * Float(short)
+        }
+        let h24 = height(24), h64 = height(64), h128 = height(128)
+        XCTAssertGreaterThan(h64, h24 * 1.8)
+        XCTAssertGreaterThan(h128, h64 * 1.5)
+        XCTAssertEqual(height(64, short: 540), height(64) / 2, accuracy: 3)
+    }
 }

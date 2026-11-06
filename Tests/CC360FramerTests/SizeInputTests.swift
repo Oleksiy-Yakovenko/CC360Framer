@@ -44,4 +44,11 @@ final class SizeInputTests: XCTestCase {
         XCTAssertTrue(LocationCardStyle.sizePresets.allSatisfy { LocationCardStyle.sizeRange.contains($0) })
         XCTAssertTrue(LocationCardStyle.sizePresets.contains(LocationCardStyle.defaultBaseSize))
     }
+
+    /// Regression: a typed non-preset value must win over the stale selected preset.
+    func testChosenTextPrefersPickThenEditorThenString() {
+        XCTAssertEqual(SizeInput.chosenText(pickedItem: "64", editorText: "24", stringValue: "24"), "64")
+        XCTAssertEqual(SizeInput.chosenText(pickedItem: nil, editorText: "50", stringValue: "24"), "50")
+        XCTAssertEqual(SizeInput.chosenText(pickedItem: nil, editorText: nil, stringValue: "50"), "50")
+    }
 }
