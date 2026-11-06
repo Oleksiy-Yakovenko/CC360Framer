@@ -12,7 +12,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
     private let widthField = NSTextField(), aspectW = NSTextField(), aspectH = NSTextField()
     private let crossfadeField = NSTextField()
     private let sizeLabel = NSTextField(labelWithString: "")
-    private var bitrateRow: NSView!, qualityRow: NSView!, widthRow: NSView!, aspectRow: NSView!
+    private var bitrateRow: GridRow!, qualityRow: GridRow!, widthRow: GridRow!, aspectRow: GridRow!
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -40,33 +40,34 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         sizeLabel.toolTip = "Resulting output size in pixels"
         let mbps = NSStackView(views: [bitrateField, NSTextField(labelWithString: "Mbps")])
         mbps.spacing = 4
+        mbps.distribution = .fill
+        bitrateField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        mbps.views.last?.setContentHuggingPriority(.required, for: .horizontal)
         let aspectBox = NSStackView(views: [aspectW, NSTextField(labelWithString: ":"), aspectH])
         aspectBox.spacing = 4
-        bitrateRow = Kit.labeledRow("Bitrate", mbps, tip: "Average video bitrate")
-        qualityRow = Kit.labeledRow("Level", qualitySlider, tip: "Encoder quality")
-        widthRow = Kit.labeledRow("Width", widthField, tip: "Output width in pixels")
-        aspectRow = Kit.labeledRow("Ratio", aspectBox, tip: "Custom aspect ratio width : height")
-        let rows: [NSView] = [
-            Kit.labeledRow("Format", containerPopup, tip: "File format"),
-            Kit.labeledRow("Codec", codecPopup, tip: "Video codec"),
-            Kit.labeledRow("Rate", ratePopup, tip: "Rate control"),
+        aspectBox.distribution = .fill
+        aspectW.widthAnchor.constraint(equalTo: aspectH.widthAnchor).isActive = true
+        aspectBox.views[1].setContentHuggingPriority(.required, for: .horizontal)
+        bitrateRow = Kit.row("Bitrate", mbps, tip: "Average video bitrate")
+        qualityRow = Kit.row("Level", qualitySlider, tip: "Encoder quality")
+        widthRow = Kit.row("Width", widthField, tip: "Output width in pixels")
+        aspectRow = Kit.row("Ratio", aspectBox, tip: "Custom aspect ratio width : height")
+        let rows: [GridRow] = [
+            Kit.row("Format", containerPopup, tip: "File format"),
+            Kit.row("Codec", codecPopup, tip: "Video codec"),
+            Kit.row("Rate", ratePopup, tip: "Rate control"),
             bitrateRow, qualityRow,
-            Kit.labeledRow("Resolution", resolutionPopup, tip: "Short side of the output"), widthRow,
-            Kit.labeledRow("Aspect", aspectPopup, tip: "Aspect ratio of the output"), aspectRow,
-            Kit.labeledRow("Size", sizeLabel, tip: "Resulting output size in pixels"),
-            Kit.labeledRow("Crossfade (s)", crossfadeField, tip: "Length of the dissolve at cuts in seconds"),
+            Kit.row("Resolution", resolutionPopup, tip: "Short side of the output"), widthRow,
+            Kit.row("Aspect", aspectPopup, tip: "Aspect ratio of the output"), aspectRow,
+            Kit.row("Size", sizeLabel, tip: "Resulting output size in pixels"),
+            Kit.row("Crossfade (s)", crossfadeField, tip: "Length of the dissolve at cuts in seconds"),
         ]
-        let stack = NSStackView(views: rows)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        let grid = Kit.grid(rows)
+        addSubview(grid)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            grid.leadingAnchor.constraint(equalTo: leadingAnchor), grid.trailingAnchor.constraint(equalTo: trailingAnchor),
+            grid.topAnchor.constraint(equalTo: topAnchor), grid.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        for r in rows { r.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         syncControls()
     }
 

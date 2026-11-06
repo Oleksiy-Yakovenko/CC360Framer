@@ -53,7 +53,8 @@ final class ExportTabViewController: ModelViewController {
         fovValue.setContentHuggingPriority(.required, for: .horizontal)
         let fovRow = NSStackView(views: [fovSlider, fovValue])
         fovRow.spacing = 6
-        fovRow.identifier = Kit.fullWidthID
+        fovRow.distribution = .fill
+        fovSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
         settingsView.identifier = Kit.fullWidthID
         capPlacement = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Default placement of captions; a caption can override it in the Inspector tab",
                                  target: self, action: #selector(captionStyleChanged))
@@ -69,18 +70,22 @@ final class ExportTabViewController: ModelViewController {
         Kit.sidebarStack(in: view, [
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
             settingsView,
-            frameCheck,
-            cutsCheck,
-            fovCheck,
-            fovRow,
+            Kit.grid([
+                Kit.checkRow(frameCheck),
+                Kit.checkRow(cutsCheck),
+                Kit.checkRow(fovCheck),
+                Kit.row("FOV", fovRow, tip: "Global vertical field of view in degrees"),
+            ]),
             Kit.title("Captions", tip: "Default look of all captions (Captions timeline), in preview and export. Saved per video and as the default for other videos. Individual captions can override every setting in the Inspector tab."),
-            capPlacement,
-            Kit.labeledRow("Font", capFont),
-            Kit.labeledRow("Size", capSize, tip: "Font size, % of the frame's short side"),
-            Kit.labeledRow("Colour", capFill, tip: "Text colour"),
-            Kit.labeledRow("Outline", capStroke, tip: "Outline colour"),
-            Kit.labeledRow("Width", capStrokeWidth, tip: "Outline width, % of the font size"),
-            capReset,
+            Kit.grid([
+                Kit.row("Placement", capPlacement, tip: "Default placement of captions"),
+                Kit.row("Font", capFont, tip: "Default caption font family"),
+                Kit.row("Size", capSize, tip: "Font size, % of the frame's short side", fill: false),
+                Kit.row("Colour", capFill, tip: "Text colour", fill: false),
+                Kit.row("Outline", capStroke, tip: "Outline colour", fill: false),
+                Kit.row("Width", capStrokeWidth, tip: "Outline width, % of the font size"),
+                Kit.checkRow(capReset),
+            ]),
             progressBar,
         ], topAnchor: view.topAnchor)
     }
@@ -224,17 +229,17 @@ final class LocationTabViewController: ModelViewController {
         resetButton = Kit.button("Reset look", tip: "Back to the default font, size and colours", target: self, action: #selector(reset))
         Kit.sidebarStack(in: view, [
             Kit.title("Location card", tip: "Place-name card shown for 10 s, in preview and export: at the start of the video, or at the card keyframes of the Location cards timeline. The look below applies to all cards."),
-            showCheck,
-            autoCheck,
+            Kit.grid([Kit.checkRow(showCheck), Kit.checkRow(autoCheck)]),
             autoNote,
-            placementPopup,
-        ] + fieldChecks.map(\.button) + [
-            Kit.labeledRow("Font", fontPopup),
-            Kit.labeledRow("Size", sizeCombo, tip: "Size of the first line in points (1080 px short side)"),
-            Kit.labeledRow("Colour", fillWell, tip: "Text colour"),
-            Kit.labeledRow("Outline", strokeWell, tip: "Outline colour"),
-            Kit.labeledRow("Width", strokeSlider, tip: "Outline width in points"),
-            resetButton,
+            Kit.grid([Kit.row("Placement", placementPopup, tip: "Where the automatic card and cards without their own placement are placed")]
+                     + fieldChecks.map { Kit.checkRow($0.button) } + [
+                Kit.row("Font", fontPopup, tip: "Font family of the card"),
+                Kit.row("Size", sizeCombo, tip: "Size of the first line in points (1080 px short side)", fill: false),
+                Kit.row("Colour", fillWell, tip: "Text colour", fill: false),
+                Kit.row("Outline", strokeWell, tip: "Outline colour", fill: false),
+                Kit.row("Width", strokeSlider, tip: "Outline width in points"),
+                Kit.checkRow(resetButton),
+            ]),
         ], topAnchor: view.topAnchor)
     }
 
@@ -332,18 +337,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cardPlacementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where this location card is placed (the Location tab's placement while the override is off)", target: self, action: #selector(commit))
         cardOverrideCheck = NSButton(checkboxWithTitle: "Override placement", target: self, action: #selector(cardOverrideToggled))
         cardOverrideCheck.toolTip = "Off: this card uses the placement chosen in the Location tab. On: it has its own placement."
-        func form(_ rows: [NSView]) -> NSStackView {
-            let s = NSStackView(views: rows)
-            s.orientation = .vertical
-            s.alignment = .leading
-            s.spacing = 6
-            for r in s.arrangedSubviews { r.widthAnchor.constraint(equalTo: s.widthAnchor).isActive = true }
-            s.identifier = Kit.fullWidthID
-            return s
-        }
-        keyForm = form([Kit.labeledRow("Time (s)", timeField), Kit.labeledRow("Yaw (°)", yawField),
-                        Kit.labeledRow("Pitch (°)", pitchField), Kit.labeledRow("FOV (°)", fovField)])
-        cutForm = form([Kit.labeledRow("Start (s)", cutStartField), Kit.labeledRow("End (s)", cutEndField)])
+        keyForm = Kit.grid([Kit.row("Time (s)", timeField), Kit.row("Yaw (°)", yawField),
+                            Kit.row("Pitch (°)", pitchField), Kit.row("FOV (°)", fovField)])
+        cutForm = Kit.grid([Kit.row("Start (s)", cutStartField), Kit.row("End (s)", cutEndField)])
         capStartField.toolTip = "Start of the caption in seconds of the source video"
         capEndField.toolTip = "End of the caption in seconds of the source video"
         for f in [ovSize, ovStrokeWidth] { f.action = #selector(overrideFieldCommitted(_:)) }
@@ -373,13 +369,14 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         capScroll.hasVerticalScroller = true
         capScroll.borderType = .bezelBorder
         capScroll.heightAnchor.constraint(equalToConstant: 80).isActive = true
-        captionForm = form([Kit.labeledRow("Start (s)", capStartField), Kit.labeledRow("End (s)", capEndField),
-                            Kit.labeledRow("Text", capScroll, tip: "Caption text (several lines allowed)"),
-                            Kit.title("Overrides", tip: "Settings of this caption that differ from the default look in the Export tab"),
-                            Kit.labeledRow("Placement", ovPlacement), Kit.labeledRow("Font", ovFont),
-                            Kit.labeledRow("Size (%)", ovSize), Kit.labeledRow("Colour", ovFill),
-                            Kit.labeledRow("Outline", ovStroke), Kit.labeledRow("Width (%)", ovStrokeWidth), ovReset])
-        cardForm = form([Kit.labeledRow("Time (s)", cardTimeField), cardOverrideCheck, Kit.labeledRow("Placement", cardPlacementPopup)])
+        captionForm = Kit.grid([Kit.row("Start (s)", capStartField), Kit.row("End (s)", capEndField),
+                                Kit.row("Text", capScroll, tip: "Caption text (several lines allowed)", top: true),
+                                Kit.fullRow(Kit.title("Overrides", tip: "Settings of this caption that differ from the default look in the Export tab")),
+                                Kit.row("Placement", ovPlacement), Kit.row("Font", ovFont),
+                                Kit.row("Size (%)", ovSize), Kit.row("Colour", ovFill, fill: false),
+                                Kit.row("Outline", ovStroke, fill: false), Kit.row("Width (%)", ovStrokeWidth),
+                                Kit.checkRow(ovReset)])
+        cardForm = Kit.grid([Kit.row("Time (s)", cardTimeField), Kit.checkRow(cardOverrideCheck), Kit.row("Placement", cardPlacementPopup)])
         empty.identifier = Kit.fullWidthID
         Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm], topAnchor: view.topAnchor)
     }

@@ -123,14 +123,19 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         folderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let folderRow = NSStackView(views: [folderButton, folderLabel])
         folderRow.spacing = 8
+        folderRow.distribution = .fill
+        folderLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        folderButton.setContentHuggingPriority(.required, for: .horizontal)
         settingsView.onChange = { [weak self] in self?.runner.settings.exportSettings = $0 }
         settingsView.identifier = Kit.fullWidthID
         let right = Kit.pageStack([
             Kit.title("Batch", tip: "Applies to every file in the list. Cuts, captions, location cards and global fov come from each file's own project; the export settings below replace its export settings."),
-            forceCheck,
-            exportCheck,
-            Kit.labeledRow("Path style", stylePopup, tip: "Camera path style"),
-            Kit.labeledRow("Output", folderRow, tip: "Output folder for the exported videos"),
+            Kit.grid([
+                Kit.checkRow(forceCheck),
+                Kit.checkRow(exportCheck),
+                Kit.row("Path style", stylePopup, tip: "Camera path style"),
+                Kit.row("Output", folderRow, tip: "Output folder for the exported videos"),
+            ]),
             Kit.title("Export settings", tip: "Used for every exported file in this batch (stored separately from the per-video export settings)."),
             settingsView,
         ])

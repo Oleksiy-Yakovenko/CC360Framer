@@ -27,6 +27,21 @@ class ModelViewController: NSViewController {
     func refresh() {}
 }
 
+/// One row of a `Kit.grid`.
+@MainActor
+final class GridRow {
+    let views: [NSView]
+    let fill: Bool, top: Bool, merged: Bool
+    fileprivate(set) var row: NSGridRow?
+    init(views: [NSView], fill: Bool, top: Bool, merged: Bool = false) {
+        self.views = views; self.fill = fill; self.top = top; self.merged = merged
+    }
+    var isHidden: Bool {
+        get { row?.isHidden ?? false }
+        set { row?.isHidden = newValue }
+    }
+}
+
 /// Small helpers for building controls in code.
 @MainActor
 enum Kit {
@@ -88,18 +103,51 @@ enum Kit {
         return stack
     }
 
-    /// A label on the left and a control on the right.
-    static func labeledRow(_ label: String, _ control: NSView, tip: String? = nil) -> NSStackView {
+    /// Width of the label column of every settings grid (labels are left-aligned; all pages share it so values line up).
+    static let labelColumnWidth: CGFloat = 88
+
+    /// A row `Label | control`. `fill`: the control stretches to the right edge; false keeps its own (fixed) size at the controls column.
+    /// `top`: align to the top of a tall control (text view).
+    static func row(_ label: String, _ control: NSView, tip: String? = nil, fill: Bool = true, top: Bool = false) -> GridRow {
         let l = NSTextField(labelWithString: label)
         l.toolTip = tip
-        l.setContentHuggingPriority(.required, for: .horizontal)
-        let row = NSStackView(views: [l, control])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.identifier = fullWidthID
+        l.lineBreakMode = .byClipping
+        l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return row
+        return GridRow(views: [l, control], fill: fill, top: top)
+    }
+
+    /// A row with an empty label cell: checkboxes (the text is the checkbox title) and buttons start at the controls column.
+    static func checkRow(_ control: NSView) -> GridRow {
+        GridRow(views: [NSGridCell.emptyContentView, control], fill: false, top: false)
+    }
+
+    /// A view spanning both columns (section title inside a grid).
+    static func fullRow(_ view: NSView) -> GridRow {
+        GridRow(views: [view, NSGridCell.emptyContentView], fill: false, top: false, merged: true)
+    }
+
+    /// Two-column grid (label column, controls column). Hide a row with `GridRow.isHidden`, not by hiding its views.
+    static func grid(_ rows: [GridRow]) -> NSGridView {
+        let g = NSGridView(views: rows.map(\.views))
+        g.translatesAutoresizingMaskIntoConstraints = false
+        g.columnSpacing = 8
+        g.rowSpacing = 6
+        g.identifier = fullWidthID
+        g.column(at: 0).width = labelColumnWidth
+        for (i, r) in rows.enumerated() {
+            let gr = g.row(at: i)
+            r.row = gr
+            gr.yPlacement = r.top ? .top : .center
+            if r.merged {
+                gr.mergeCells(in: NSRange(location: 0, length: 2))
+                g.cell(atColumnIndex: 0, rowIndex: i).xPlacement = .leading
+            } else {
+                g.cell(atColumnIndex: 0, rowIndex: i).xPlacement = .leading
+                g.cell(atColumnIndex: 1, rowIndex: i).xPlacement = r.fill ? .fill : .leading
+            }
+        }
+        return g
     }
 
     static func colorWell(_ color: NSColor, tip: String, target: AnyObject, action: Selector) -> NSColorWell {
