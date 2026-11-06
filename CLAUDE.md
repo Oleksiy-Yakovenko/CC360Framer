@@ -12,7 +12,8 @@ Notes for working here:
 
 ## Architecture (`Sources/CC360Framer/`)
 - `main.swift`: dispatches CLI modes, otherwise `CC360FramerApp.main()`.
-- `App.swift`: SwiftUI `ContentView` (controls, seekbar with keyframe ticks, pickers, Re-analyse confirmation), `MetalView` wrapper, `CC360FramerApp`.
+- `App.swift`: `AppDelegate` (window, menu, open/export actions) and `CC360FramerApp.main()`. The UI is AppKit (no SwiftUI), one view controller per area, all subclasses of `ModelViewController` (`ViewKit.swift`: subscribes to `PlayerModel.objectWillChange`, calls `refresh()`):
+  `MainViewController.swift` (`NSSplitViewController` left sidebar | centre | right inspector, window toolbar with tracking separators, file drop), `LeftSidebarViewController` (Auto, analysis, path style, stabilise, location), `RightSidebarViewController` (export preset), `PlayerViewController` (Metal `LookView` + error banner), `TransportViewController` (play, seekbar, keyframe ticks, audio toggles), `KeyframeViewController` (keyframe edit buttons, status line). Keyboard shortcuts (space, K, Delete) are menu key equivalents.
 - `PlayerModel.swift`: central `ObservableObject`. Opening, playback, audio track toggles, keyframes, style/stabilisation state, sidecar load/save, `analyze()`, `buildPath()`, `export`, `runBatch`. `style` is persisted in `UserDefaults` (`pathStyle`).
 - `StackCompositor.swift`: custom `AVVideoCompositing` that stacks both lens tracks (track 0 on top) into one 5888x3840 420 full-range frame. AVFoundation rejects `.360`, so the file is opened through a temporary `.mp4` symlink (`playableURL`).
 - `Renderer.swift` / `Projection.swift`: Metal view and runtime-compiled shader. Maps a rectilinear view (yaw, pitch, vertical fov, stabiliser basis) onto the two-ring EAC layout; feathered 64 px tile overlaps; display-link driven; `ViewState` and `Uniforms` (Swift and MSL layouts must match).

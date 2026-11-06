@@ -1,238 +1,49 @@
-import SwiftUI
-import MetalKit
+import AppKit
 import UniformTypeIdentifiers
 
-struct MetalView: NSViewRepresentable {
-    let model: PlayerModel
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    let model = PlayerModel()
+    private var window: NSWindow!
+    private var main: MainViewController!
 
-    func makeNSView(context: Context) -> LookView {
-        let device = MTLCreateSystemDefaultDevice()!
-        let view = LookView(frame: .zero, device: device)
-        view.state = model.viewState
-        view.colorPixelFormat = .bgra8Unorm
-        view.preferredFramesPerSecond = 60
-        view.framebufferOnly = true
-        let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: view.colorPixelFormat)
-        renderer.frameProvider = { [frames = model.frames] host in frames.next(at: host) }
-        renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
-        model.onOverlay = { [weak renderer] in renderer?.setOverlay($0) }
-        model.onOverlay?(model.overlayImage)
-        view.delegate = renderer
-        context.coordinator.renderer = renderer
-        return view
-    }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        buildMenu()
 
-    func updateNSView(_ nsView: LookView, context: Context) {}
+        main = MainViewController(model: model)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                          backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = main
+        window.setContentSize(NSSize(width: 1280, height: 800))
+        window.contentMinSize = NSSize(width: 900, height: 520)
+        window.title = "CC360Framer"
+        window.titleVisibility = .hidden
+        window.toolbarStyle = .unified
+        window.toolbar = main.makeToolbar()
+        if !window.setFrameUsingName("MainWindow") { window.center() }
+        window.setFrameAutosaveName("MainWindow")
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    final class Coordinator { var renderer: Renderer? }
-}
-
-struct ContentView: View {
-    @ObservedObject var model: PlayerModel
-    @AppStorage("showRightSidebar") private var showRight = true
-    @State private var columns = NavigationSplitViewVisibility.all
-    @State private var preset = Exporter.Preset.all[0]
-    @State private var confirmReanalyse = false
-
-    var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            leftSidebar.navigationSplitViewColumnWidth(230)
-        } detail: {
-            VStack(spacing: 0) {
-                ZStack {
-                    MetalView(model: model)
-                    if let err = model.errorText {
-                        Text(err).padding().background(.red.opacity(0.8)).foregroundStyle(.white).cornerRadius(8)
-                    }
-                }
-                .frame(minHeight: 300)
-                controls.padding(10)
-            }
-            .inspector(isPresented: $showRight) {
-                rightSidebar.inspectorColumnWidth(200)
-            }
-            .navigationTitle("")
-            .toolbar {
-                ToolbarItemGroup(placement: .navigation) {
-                    Text("CC360Framer").font(.headline)
-                    Button { openPanel() } label: { Label("Open…", systemImage: "folder") }
-                        .help("Open a .360 file")
-                    if let p = model.exportProgress {
-                        ProgressView(value: p).frame(width: 90)
-                        Button("Cancel") { model.cancelJob() }
-                    } else {
-                        Button { exportPanel() } label: { Label("Export…", systemImage: "arrowshape.up.fill") }
-                            .disabled(model.duration == 0).help("Export the reframed video with the selected preset")
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showRight.toggle() } label: { Image(systemName: "sidebar.right") }
-                        .help("Show or hide the right sidebar").keyboardShortcut("2", modifiers: [.command, .option])
-                }
-            }
-        }
-        .frame(minWidth: 900, minHeight: 520)
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            guard let p = providers.first else { return false }
-            _ = p.loadObject(ofClass: URL.self) { url, _ in
-                if let url { Task { @MainActor in await model.open(url) } }
-            }
-            return true
+        // First non-flag argument is a file to open on launch.
+        if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
+            Task { await model.open(URL(fileURLWithPath: path)) }
         }
     }
 
-    /// A control with a title and a one-line explanation of what it does.
-    func field<C: View>(_ title: String, _ detail: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            content()
-        }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationWillTerminate(_ notification: Notification) { model.cleanup() }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let url = urls.first { Task { await model.open(url) } }
     }
 
-    var leftSidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                field("Auto", "Follow the camera path: the view tracks the keyframes at the playhead.") {
-                    Toggle("Auto", isOn: Binding(get: { model.autoFollow }, set: { model.autoFollow = $0 && !model.keyframes.isEmpty }))
-                        .toggleStyle(.button).disabled(model.keyframes.isEmpty)
-                        .help("Follow the camera path. While on, the view tracks the keyframes at the playhead; dragging the view switches it off.")
-                }
-                field("Analysis", "Detects people and objects; needed to build a camera path.") {
-                    if let p = model.analysisProgress {
-                        HStack {
-                            ProgressView(value: p)
-                            Button("Cancel") { model.cancelJob() }
-                        }
-                    } else if model.observations.isEmpty {
-                        Button("Analyse") { model.analyze() }.help("Detect people and objects, then build a camera path")
-                    } else {
-                        HStack {
-                            Button("Build path") { model.buildPath() }.help("Regenerate the path in this style (replaces keyframes)")
-                            Button("Re-analyse") { confirmReanalyse = true }
-                                .confirmationDialog("Re-run the analysis?", isPresented: $confirmReanalyse) {
-                                    Button("Re-analyse", role: .destructive) { model.analyze() }
-                                    Button("Cancel", role: .cancel) {}
-                                } message: {
-                                    Text("This takes several minutes and replaces the current detections and keyframes.")
-                                }
-                        }
-                    }
-                }
-                field("Camera path", "How the path is generated from the detections.") {
-                    Picker("", selection: Binding(get: { model.style }, set: { model.style = $0; model.styleChanged() })) {
-                        ForEach(PathStyle.allCases) { Text($0.rawValue).tag($0) }
-                    }.labelsHidden().help("How the camera path is generated")
-                }
-                field("Stabilise", "Horizon lock and shake removal from the camera's motion data.") {
-                    Picker("", selection: Binding(get: { model.stabilization }, set: { model.stabilization = $0; model.stabilizationChanged() })) {
-                        ForEach(StabilizeMode.allCases) { Text($0.rawValue).tag($0) }
-                    }.labelsHidden().help("Horizon lock and shake removal from the camera's motion data")
-                }
-                field("Location card", "Where the place-name card (first 10 s) is placed, in preview and export.") {
-                    Picker("", selection: $model.overlayPlacement) {
-                        ForEach(OverlayPlacement.allCases) { Text($0.rawValue).tag($0) }
-                    }.labelsHidden().help("Where the location card (first 10 s) is placed, in preview and export")
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(width: 230)
-    }
+    // MARK: Actions (menu and toolbar)
 
-    var rightSidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                field("Export preset", "Resolution and format used by the Export button in the toolbar.") {
-                    Picker("", selection: $preset) {
-                        ForEach(Exporter.Preset.all, id: \.self) { Text($0.name).tag($0) }
-                    }.labelsHidden()
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(width: 200)
-    }
-
-    var controls: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Button { model.togglePlay() } label: {
-                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").frame(width: 20)
-                }
-                .keyboardShortcut(.space, modifiers: [])
-                Text(format(model.position)).monospacedDigit()
-                VStack(spacing: 0) {
-                    Slider(value: Binding(get: { model.position }, set: { model.scrub(to: $0) }),
-                           in: 0...max(model.duration, 0.1),
-                           onEditingChanged: { editing in
-                               if editing { model.beginScrub() } else { model.endScrub(at: model.position) }
-                           })
-                    keyTicks.frame(height: 12)
-                }
-                Text(format(model.duration)).monospacedDigit()
-            }
-            HStack {
-                Button { jumpKey(forward: false) } label: { Image(systemName: "backward.end.fill") }
-                    .disabled(model.keyframes.isEmpty).help("Previous keyframe")
-                Button { jumpKey(forward: true) } label: { Image(systemName: "forward.end.fill") }
-                    .disabled(model.keyframes.isEmpty).help("Next keyframe")
-                Button("Set key") { model.setKey() }.keyboardShortcut("k", modifiers: [])
-                    .help("Keyframe the current view at the playhead (K)")
-                Button("Delete key") { model.deleteSelectedKey() }.disabled(model.selectedKey == nil)
-                    .keyboardShortcut(.delete, modifiers: [])
-                    .help("Delete the selected keyframe")
-                Button("Clear keys") { model.clearKeys() }.disabled(model.keyframes.isEmpty)
-                    .help("Remove all keyframes")
-                Spacer()
-                if !model.audioOptions.isEmpty {
-                    Image(systemName: "speaker.wave.2")
-                    ForEach(model.audioOptions) { opt in
-                        Toggle(opt.label, isOn: Binding(get: { opt.enabled }, set: { _ in model.toggleAudio(opt.id) }))
-                            .toggleStyle(.button)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Jumps to the nearest keyframe before or after the playhead.
-    func jumpKey(forward: Bool) {
-        let t = model.position
-        let target = forward ? model.keyframes.first { $0.time > t + 0.15 }
-                             : model.keyframes.last { $0.time < t - 0.15 }
-        if let target { model.select(target) }
-    }
-
-    /// Keyframe markers aligned under the seekbar; click one to select it and jump there.
-    var keyTicks: some View {
-        GeometryReader { geo in
-            let inset: CGFloat = 8   // slider thumb radius
-            let width = max(geo.size.width - inset * 2, 1)
-            ForEach(model.keyframes) { key in
-                let selected = key.id == model.selectedKey
-                Image(systemName: "diamond.fill")
-                    .font(.system(size: selected ? 10 : 7))
-                    .foregroundStyle(selected ? Color.accentColor : Color.orange)
-                    .frame(width: 14, height: 12)
-                    .contentShape(Rectangle())
-                    .position(x: inset + width * CGFloat(key.time / max(model.duration, 0.1)), y: 6)
-                    .onTapGesture { model.select(key) }
-            }
-        }
-    }
-
-    func exportPanel() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = (model.title as NSString).deletingPathExtension + "-reframed.mp4"
-        if panel.runModal() == .OK, let url = panel.url { model.export(preset: preset, to: url) }
-    }
-
-    func openPanel() {
+    @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "360") ?? .movie, .movie, .mpeg4Movie]
         panel.allowsOtherFileTypes = true
@@ -241,38 +52,83 @@ struct ContentView: View {
         }
     }
 
-    func format(_ s: Double) -> String {
-        let t = Int(max(s, 0))
-        return String(format: "%d:%02d", t / 60, t % 60)
+    @objc func exportDocument(_ sender: Any?) {
+        if model.exportProgress != nil { model.cancelJob(); return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Movie]
+        panel.nameFieldStringValue = (model.title as NSString).deletingPathExtension + "-reframed.mp4"
+        if panel.runModal() == .OK, let url = panel.url { model.export(preset: model.exportPreset, to: url) }
+    }
+
+    @objc func toggleSidebar(_ sender: Any?) { main.toggleSidebar(sender) }
+    @objc func toggleInspector(_ sender: Any?) { main.toggleInspector() }
+    @objc func togglePlay(_ sender: Any?) { model.togglePlay() }
+    @objc func setKey(_ sender: Any?) { model.setKey() }
+    @objc func deleteKey(_ sender: Any?) { model.deleteSelectedKey() }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(exportDocument): return model.duration > 0 || model.exportProgress != nil
+        case #selector(deleteKey): return model.selectedKey != nil
+        case #selector(togglePlay), #selector(setKey): return model.duration > 0
+        default: return true
+        }
+    }
+
+    // MARK: Menu
+
+    private func buildMenu() {
+        let bar = NSMenu()
+        func add(_ menu: NSMenu, _ title: String, _ action: Selector?, _ key: String = "",
+                 _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = mods
+            item.target = target
+        }
+        func submenu(_ title: String) -> NSMenu {
+            let m = NSMenu(title: title)
+            bar.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = m
+            return m
+        }
+
+        let app = submenu("CC360Framer")
+        add(app, "About CC360Framer", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
+        app.addItem(.separator())
+        add(app, "Hide CC360Framer", #selector(NSApplication.hide(_:)), "h", target: NSApp)
+        app.addItem(.separator())
+        add(app, "Quit CC360Framer", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
+
+        let file = submenu("File")
+        add(file, "Open…", #selector(openDocument), "o", target: self)
+        add(file, "Export…", #selector(exportDocument), "e", target: self)
+        file.addItem(.separator())
+        add(file, "Close", #selector(NSWindow.performClose(_:)), "w")
+
+        let view = submenu("View")
+        add(view, "Toggle Left Sidebar", #selector(toggleSidebar), "s", [.command, .control], target: self)
+        add(view, "Toggle Right Sidebar", #selector(toggleInspector), "2", [.command, .option], target: self)
+
+        let play = submenu("Playback")
+        add(play, "Play / Pause", #selector(togglePlay), " ", [], target: self)
+        add(play, "Set Keyframe", #selector(setKey), "k", [], target: self)
+        add(play, "Delete Keyframe", #selector(deleteKey), "\u{8}", [], target: self)
+
+        let windows = submenu("Window")
+        add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
+        add(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
+        NSApp.windowsMenu = windows
+
+        NSApp.mainMenu = bar
     }
 }
 
-struct CC360FramerApp: App {
-    @StateObject private var model = PlayerModel()
-
-    init() {
-        NSApplication.shared.setActivationPolicy(.regular)
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-
-    var body: some Scene {
-        WindowGroup("CC360Framer") {
-            ContentView(model: model)
-                .task {
-                    // First non-flag argument is a file to open on launch.
-                    if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
-                        await model.open(URL(fileURLWithPath: path))
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                    model.cleanup()
-                }
-        }
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Open…") { NSApp.sendAction(#selector(NSDocumentController.openDocument(_:)), to: nil, from: nil) }
-                    .keyboardShortcut("o")
-            }
+enum CC360FramerApp {
+    static func main() {
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            let delegate = AppDelegate()
+            app.delegate = delegate
+            app.run()
         }
     }
 }

@@ -55,6 +55,7 @@ final class PlayerModel: ObservableObject {
         didSet { UserDefaults.standard.set(style.rawValue, forKey: "pathStyle") }
     }
     @Published var stabilization: StabilizeMode = .smooth
+    @Published var exportPreset = Exporter.Preset.all[0]
     private var telemetry: Telemetry?
     /// Location title card for the first seconds of the clip; nil when the file has no GPS lock.
     private(set) var overlayImage: CGImage?
