@@ -24,6 +24,9 @@ struct ProjectSidecar: Codable, Equatable {
     var captionStyle: CaptionStyle?
     /// Where Scenery "forward" shots look (nil = the app default).
     var forwardMode: TravelDirection.ForwardMode?
+    /// Direction lock (nil = off) and the last direction the user set, yaw in radians (nil = 0, camera front).
+    var directionLock: Bool?
+    var lockedYaw: Float?
 
     static let kind = "project"
 

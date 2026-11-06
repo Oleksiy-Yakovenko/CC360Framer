@@ -12,6 +12,8 @@ final class LeftSidebarViewController: ModelViewController {
     private var qualityPopup = NSPopUpButton()
     private var stylePopup = NSPopUpButton()
     private var forwardPopup = NSPopUpButton()
+    private let lockCheck = NSButton(checkboxWithTitle: "Direction lock", target: nil, action: nil)
+    private let lockNote = NSTextField(wrappingLabelWithString: "")
     private var stabilizePopup = NSPopUpButton()
 
     override func loadView() {
@@ -41,6 +43,15 @@ final class LeftSidebarViewController: ModelViewController {
         detectionsCheck.action = #selector(detectionsToggled)
         detectionsCheck.toolTip = "Preview only: outline the people (green) and objects (yellow) found by the analysis at the nearest analysed frame (about 5 per second). Duplicates seen in two overlapping analysis views are merged, and groups of 3 or more people get one extra cyan dashed box. Analyses made by older versions have no boxes: re-analyse to get them."
 
+        lockCheck.target = self
+        lockCheck.action = #selector(lockToggled)
+        lockCheck.toolTip = "Rotate the preview to the direction you consider forward; the last direction you set is kept (with the file). While ticked it is used for the Scenery forward shots, the double-click reset and the initial view, and it overrides the Forward setting."
+
+        lockNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        lockNote.textColor = .secondaryLabelColor
+        lockNote.identifier = Kit.fullWidthID
+        lockNote.isHidden = true
+
         let autoTitle = Kit.title("Auto", tip: "Follow the camera path: the view tracks the keyframes at the playhead.")
         let analysisTitle = Kit.title("Analysis", tip: "Detects people and objects; needed to build a camera path.")
         let pathTitle = Kit.title("Camera path", tip: "How the path is generated from the detections.")
@@ -49,10 +60,10 @@ final class LeftSidebarViewController: ModelViewController {
         let stack = Kit.sidebarStack(in: view, [
             autoTitle, autoButton,
             analysisTitle, qualityPopup, progress, cancelButton, analyseButton, buildButton, reanalyseButton, detectionsCheck,
-            pathTitle, stylePopup, forwardPopup,
+            pathTitle, stylePopup, forwardPopup, lockCheck, lockNote,
             stabTitle, stabilizePopup,
         ])
-        for v in [autoButton, reanalyseButton, detectionsCheck, forwardPopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
+        for v in [autoButton, reanalyseButton, detectionsCheck, lockCheck, lockNote, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
         stack.setCustomSpacing(6, after: qualityPopup)
         stack.setCustomSpacing(18, after: analyseButton)
         stack.setCustomSpacing(18, after: buildButton)
@@ -80,8 +91,12 @@ final class LeftSidebarViewController: ModelViewController {
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: model.style) ?? 0)
         let travel = model.travelEstimate?.isUsable == true
         forwardPopup.selectItem(at: TravelDirection.ForwardMode.allCases.firstIndex(of: travel ? model.forwardMode : .cameraFront) ?? 0)
-        forwardPopup.isEnabled = travel && model.style == .scenery
+        forwardPopup.isEnabled = travel && model.style == .scenery && !model.directionLock
         forwardPopup.toolTip = "Where the Scenery shots that look straight ahead are aimed: along the direction of travel (accelerometer and GPS; needs movement and GPS) or straight ahead of the camera. Used by the Scenery style only. " + model.forwardNote
+        lockCheck.state = model.directionLock ? .on : .off
+        lockCheck.isEnabled = model.duration > 0
+        lockNote.stringValue = DirectionLock.summary(yaw: model.lockedYaw)
+        lockNote.isHidden = !model.directionLock
         stabilizePopup.selectItem(at: StabilizeMode.allCases.firstIndex(of: model.stabilization) ?? 0)
     }
 
@@ -115,6 +130,8 @@ final class LeftSidebarViewController: ModelViewController {
     @objc private func forwardChosen() {
         model.setForwardMode(TravelDirection.ForwardMode.allCases[max(forwardPopup.indexOfSelectedItem, 0)])
     }
+
+    @objc private func lockToggled() { model.setDirectionLock(lockCheck.state == .on) }
 
     @objc private func stabilizeChosen() {
         model.stabilization = StabilizeMode.allCases[stabilizePopup.indexOfSelectedItem]

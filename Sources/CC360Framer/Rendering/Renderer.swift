@@ -505,6 +505,7 @@ final class LookView: MTKView {
     override func mouseDragged(with event: NSEvent) {
         guard UserLook.dragCounts(deltaX: Double(event.deltaX), deltaY: Double(event.deltaY)) else { return }
         state.onUserLook?()
+        state.onUserDrag?()
         // Sensitivity scales with zoom so the scene follows the cursor.
         var fov = Double(state.fovDegrees)
         if let ea = state.exportFrameAspect, bounds.height > 0 {   // the guide changes the fov the preview is drawn with

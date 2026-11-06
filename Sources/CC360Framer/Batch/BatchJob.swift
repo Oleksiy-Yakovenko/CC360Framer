@@ -60,11 +60,13 @@ enum BatchJob {
 
         // Keyframes: keep the user's (existing sidecar) unless forced; build when there are none.
         progress(.building)
+        let project = ProjectSidecar.load(for: url)   // per-file settings (direction lock, cuts, cards, ...)
         var keys = existingKeys
         if options.forceReanalyse || keys.isEmpty {
             let travel = telemetry.flatMap { TravelDirection.estimate(telemetry: $0, duration: duration) }
-            let forward = TravelDirection.forwardYaw(mode: options.forwardMode, estimate: travel, stabilizer: stabilizer)
-            log("forward: \(travel.map(\.summary) ?? "no estimate (camera front)")")
+            let lock = project.directionLock ?? false
+            let forward = DirectionLock.forwardYaw(lock: lock, lockedYaw: project.lockedYaw ?? 0, mode: options.forwardMode, estimate: travel, stabilizer: stabilizer)
+            log(lock ? DirectionLock.summary(yaw: project.lockedYaw ?? 0) : "forward: \(travel.map(\.summary) ?? "no estimate (camera front)")")
             let built = options.style.keyframes(from: virtualObservations(observations, stabilizer: stabilizer), duration: duration, fov: 70, forwardYaw: forward)
             if !built.isEmpty {
                 keys = built
@@ -79,8 +81,6 @@ enum BatchJob {
         guard options.export else { return }
         guard let output else { throw Exporter.Failure(errorDescription: "No output file.") }
 
-        // Per-file project settings.
-        let project = ProjectSidecar.load(for: url)
         let settings = options.exportSettings
         let global = project.globalFov ?? GlobalFov.loadDefaults()
         let map = TimeMap(cuts: project.cuts ?? [], duration: duration, crossfade: settings.crossfade)

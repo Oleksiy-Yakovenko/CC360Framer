@@ -34,7 +34,12 @@ final class ViewState {
     /// Called when the user takes manual control of the view (drag/zoom).
     var onUserLook: (() -> Void)?
 
-    func reset() { yaw = 0; pitch = 0; fovDegrees = 70 }
+    /// Called for drags that rotate the view (not scroll/pinch zoom).
+    var onUserDrag: (() -> Void)?
+    /// Where `reset()` looks: 0 = camera front, or the locked direction while Direction lock is on.
+    var forwardYaw: Float = 0
+
+    func reset() { yaw = forwardYaw; pitch = 0; fovDegrees = 70 }
 }
 
 struct Uniforms {
