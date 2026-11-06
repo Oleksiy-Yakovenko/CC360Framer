@@ -3,8 +3,18 @@
 macOS app (SwiftPM executable, Swift 5 mode, macOS 14+) that opens GoPro Max 2 `.360` files, plays them with mouse look, auto-reframes around subjects and exports a flat video. See `README.md` for the user-facing description.
 
 ## Build and run
-- `./build.sh` builds release and wraps it as ad-hoc signed `CC360Framer.app`; `open CC360Framer.app` or `CC360Framer.app/Contents/MacOS/CC360Framer file.360`. `swift build` for debug. `open -a Xcode Package.swift` for Xcode.
-- Headless/CLI modes only work reliably through the built `.app` binary. A `.build/debug` run from a sandboxed shell printed nothing; if a batch run is silent, retry with the sandbox disabled.
+Command line:
+- `./build.sh`: release build wrapped as ad-hoc signed `CC360Framer.app`. Run with `open CC360Framer.app` or `CC360Framer.app/Contents/MacOS/CC360Framer file.360`.
+- `swift build` (debug) or `swift build -c release`; the binary is `.build/debug/CC360Framer` or `.build/release/CC360Framer`. Run with `swift run CC360Framer file.360`. The bare binary has no app bundle, so prefer the `.app` for GUI and batch runs.
+
+Xcode:
+- `open -a Xcode Package.swift` (or double-click `Package.swift`). Xcode opens the SwiftPM package directly; there is no `.xcodeproj`.
+- Select the `CC360Framer` scheme and "My Mac" as the destination, then Product > Run (Cmd+R) or Build (Cmd+B).
+- To pass a file or environment variables: Product > Scheme > Edit Scheme > Run > Arguments (the `.360` path under "Arguments Passed On Launch", `CC360_*` under "Environment Variables").
+- Xcode runs the unbundled binary, so use `./build.sh` when you need the real `.app`.
+
+Notes:
+- Headless/CLI modes only worked reliably through the built `.app` binary. A `.build/debug` run from a sandboxed shell printed nothing; if a batch run is silent, retry with the sandbox disabled.
 - Commits end with the `Co-Authored-By` line given by the session. `.gitignore` excludes `.build/`, `*.app`, `*.360`, `*.reframe.json`, `*.analysis.json`.
 
 ## Architecture (`Sources/CC360Framer/`)
