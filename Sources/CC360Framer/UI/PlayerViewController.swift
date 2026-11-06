@@ -18,8 +18,8 @@ final class PlayerViewController: ModelViewController {
         let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: look.colorPixelFormat)
         renderer.frameProvider = { [frames = model.frames] host in frames.next(at: host) }
         renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
-        model.onOverlay = { [weak renderer] in renderer?.setOverlay($0) }
-        model.onOverlay?(model.overlayImage)
+        model.onOverlays = { [weak renderer] in renderer?.setOverlays($0) }
+        model.onOverlays?(model.overlays)
         look.delegate = renderer
         self.renderer = renderer
         lookView = look

@@ -87,6 +87,7 @@ struct TimelineItem: Equatable, Identifiable {
 enum TimelineKind: String, CaseIterable {
     case keyframes = "Keyframes"
     case cuts = "Cuts"
+    case locationCards = "Location cards"
 
     var isRegion: Bool { self == .cuts }
 }

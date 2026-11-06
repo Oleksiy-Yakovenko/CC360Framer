@@ -11,6 +11,10 @@ struct ProjectSidecar: Codable, Equatable {
     var cuts: [CutRegion]?
     /// Preview playback skips the cuts (nil = off).
     var previewWithCuts: Bool?
+    /// Location card keyframes (nil = none, then the automatic card applies).
+    var locationCards: [LocationCardKey]?
+    /// false = no automatic card at t = 0 (nil = on).
+    var autoLocationCard: Bool?
 
     static let kind = "project"
 

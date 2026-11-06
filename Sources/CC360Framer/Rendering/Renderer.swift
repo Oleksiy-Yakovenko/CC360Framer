@@ -153,7 +153,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var stackTexture: MTLTexture?
     private let overlayPipeline: MTLRenderPipelineState
     private let guidePipeline: MTLRenderPipelineState
-    private var overlayTexture: MTLTexture?
+    /// Overlay bitmaps by key plus the plan deciding what to draw at a time; guarded by a lock (set from the UI, read when drawing).
+    private var overlayTextures: [String: (image: CGImage, texture: MTLTexture)] = [:]
+    private var overlayPlan = OverlayPlan.empty
+    private let overlayLock = NSLock()
 
     init(device: MTLDevice, state: ViewState, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -222,42 +225,47 @@ final class Renderer: NSObject, MTKViewDelegate {
         texture = t; chroma = nil
     }
 
-    /// Title card (premultiplied BGRA, e.g. from `LocationOverlay.image`) shown over the first seconds of the video; nil removes it.
-    func setOverlay(_ image: CGImage?) {
-        guard let image else { overlayTexture = nil; return }
+    /// Overlay bitmaps (premultiplied BGRA, keyed as the plan refers to them) and the plan; textures of unchanged images are reused.
+    func setOverlays(_ bundle: OverlayBundle) {
+        overlayLock.lock(); defer { overlayLock.unlock() }
+        var textures: [String: (image: CGImage, texture: MTLTexture)] = [:]
+        for (key, image) in bundle.images {
+            if let old = overlayTextures[key], old.image === image { textures[key] = old; continue }
+            if let t = makeOverlayTexture(image) { textures[key] = (image, t) }
+        }
+        overlayTextures = textures
+        overlayPlan = bundle.plan
+    }
+
+    private func makeOverlayTexture(_ image: CGImage) -> MTLTexture? {
         let w = image.width, h = image.height
         var bytes = [UInt8](repeating: 0, count: w * h * 4)
         guard let ctx = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
-        guard let t = device.makeTexture(descriptor: d) else { return }
+        guard let t = device.makeTexture(descriptor: d) else { return nil }
         t.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: bytes, bytesPerRow: w * 4)
-        overlayTexture = t
+        return t
     }
 
+    /// Composites every overlay that is active at the frame's (source) time, in plan order, over the picture.
     private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float) {
-        guard let tex = overlayTexture else { return }
-        let alpha = LocationOverlay.alpha(at: state.frameTime)
-        guard alpha > 0 else { return }
-        // Card height is a fixed share of the short side; shrink if it would not fit the width.
-        let short = min(targetWidth, targetHeight)
-        var h = short * 0.4
-        var w = h * Float(tex.width) / Float(tex.height)
-        if w > targetWidth * 0.9 { w = targetWidth * 0.9; h = w * Float(tex.height) / Float(tex.width) }
-        let margin = short * 0.04
-        let ndcW = 2 * w / targetWidth, ndcH = 2 * h / targetHeight
-        let mx = 2 * margin / targetWidth, my = 2 * margin / targetHeight
-        let a = state.overlayPlacement.anchor
-        let x0 = a.x < 0 ? -1 + mx : a.x > 0 ? 1 - mx - ndcW : -ndcW / 2
-        let y0 = a.y < 0 ? -1 + my : a.y > 0 ? 1 - my - ndcH : -ndcH / 2
-        var u: [Float] = [x0, y0, x0 + ndcW, y0 + ndcH, alpha, 0, 0, 0]
-        enc.setRenderPipelineState(overlayPipeline)
-        enc.setVertexBytes(&u, length: u.count * 4, index: 0)
-        enc.setFragmentBytes(&u, length: u.count * 4, index: 0)
-        enc.setFragmentTexture(tex, index: 0)
-        enc.setFragmentSamplerState(sampler, index: 0)
-        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        overlayLock.lock()
+        let plan = overlayPlan, textures = overlayTextures
+        overlayLock.unlock()
+        for d in plan.draws(at: state.frameTime) {
+            guard let tex = textures[d.key]?.texture else { continue }
+            let r = OverlayLayout.rect(texWidth: tex.width, texHeight: tex.height, targetWidth: targetWidth, targetHeight: targetHeight,
+                                       placement: d.placement, size: d.size)
+            var u: [Float] = [r.x0, r.y0, r.x1, r.y1, d.alpha, 0, 0, 0]
+            enc.setRenderPipelineState(overlayPipeline)
+            enc.setVertexBytes(&u, length: u.count * 4, index: 0)
+            enc.setFragmentBytes(&u, length: u.count * 4, index: 0)
+            enc.setFragmentTexture(tex, index: 0)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
     }
 
     func setTexture(_ t: MTLTexture) { texture = t; chroma = nil }

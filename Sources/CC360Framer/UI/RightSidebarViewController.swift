@@ -132,10 +132,13 @@ final class LocationTabViewController: ModelViewController {
     private var strokeWell = NSColorWell()
     private let strokeSlider = NSSlider(value: 0, minValue: 0, maxValue: 12, target: nil, action: nil)
     private var resetButton = NSButton()
+    private var autoCheck = NSButton()
 
     override func loadView() {
         view = NSView()
-        placementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the location card (first 10 s) is placed, in preview and export",
+        autoCheck = NSButton(checkboxWithTitle: "Automatic card at start", target: self, action: #selector(autoToggled))
+        autoCheck.toolTip = "Show the card for the first 10 s of the video when no card keyframes exist. As soon as you add cards on the Location cards timeline only those are shown (add one at 0 s to keep a card at the start)."
+        placementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the automatic card (first 10 s) is placed, and the placement of newly added card keyframes. Each card keyframe keeps its own placement (Inspector tab).",
                                    target: self, action: #selector(placementChosen))
         fontPopup = Kit.fontPopup(tip: "Font family of the card", target: self, action: #selector(styleChanged))
         fontPopup.insertItem(withTitle: "System", at: 0)
@@ -147,7 +150,8 @@ final class LocationTabViewController: ModelViewController {
         strokeWell = Kit.colorWell(.black, tip: "Outline colour", target: self, action: #selector(styleChanged))
         resetButton = Kit.button("Reset look", tip: "Back to the default font, size and colours", target: self, action: #selector(reset))
         Kit.sidebarStack(in: view, [
-            Kit.title("Location card", tip: "Place-name card shown during the first 10 s, in preview and export."),
+            Kit.title("Location card", tip: "Place-name card shown for 10 s, in preview and export: at the start of the video, or at the card keyframes of the Location cards timeline. The look below applies to all cards."),
+            autoCheck,
             placementPopup,
             Kit.labeledRow("Font", fontPopup),
             Kit.labeledRow("Size", sizeSlider, tip: "Size of the first line in points"),
@@ -167,7 +171,10 @@ final class LocationTabViewController: ModelViewController {
         if fillWell.color != s.fill.nsColor { fillWell.color = s.fill.nsColor }
         if strokeWell.color != s.stroke.nsColor { strokeWell.color = s.stroke.nsColor }
         resetButton.isEnabled = s != LocationCardStyle()
+        autoCheck.state = model.autoLocationCard ? .on : .off
     }
+
+    @objc private func autoToggled() { model.setAutoLocationCard(autoCheck.state == .on) }
 
     @objc private func placementChosen() { model.overlayPlacement = OverlayPlacement.allCases[placementPopup.indexOfSelectedItem] }
 
@@ -196,9 +203,12 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let timeField = NSTextField(), yawField = NSTextField(), pitchField = NSTextField(), fovField = NSTextField()
     private let cutStartField = NSTextField(), cutEndField = NSTextField()
-    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField] }
+    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField] }
+    private let cardTimeField = NSTextField()
+    private var cardPlacementPopup = NSPopUpButton()
     private var keyForm: NSView!
     private var cutForm: NSView!
+    private var cardForm: NSView!
     private let heading = Kit.title("Keyframe", tip: "Edit the selected item; changes can be undone.")
 
     override func loadView() {
@@ -216,6 +226,8 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         fovField.toolTip = "Vertical field of view in degrees, 20 to 140"
         cutStartField.toolTip = "Start of the cut in seconds of the source video"
         cutEndField.toolTip = "End of the cut in seconds of the source video"
+        cardTimeField.toolTip = "Time in seconds of the source video at which the location card appears (it stays for 10 s)"
+        cardPlacementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where this location card is placed", target: self, action: #selector(commit))
         func form(_ rows: [NSView]) -> NSStackView {
             let s = NSStackView(views: rows)
             s.orientation = .vertical
@@ -228,20 +240,26 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         keyForm = form([Kit.labeledRow("Time (s)", timeField), Kit.labeledRow("Yaw (°)", yawField),
                         Kit.labeledRow("Pitch (°)", pitchField), Kit.labeledRow("FOV (°)", fovField)])
         cutForm = form([Kit.labeledRow("Start (s)", cutStartField), Kit.labeledRow("End (s)", cutEndField)])
+        cardForm = form([Kit.labeledRow("Time (s)", cardTimeField), Kit.labeledRow("Placement", cardPlacementPopup)])
         empty.identifier = Kit.fullWidthID
-        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm], topAnchor: view.topAnchor)
+        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm], topAnchor: view.topAnchor)
     }
 
     override func refresh() {
         let kind = model.activeTimeline
         let key = kind == .keyframes ? model.selectedKeyframe : nil
         let cut = kind == .cuts ? model.selectedCutRegion : nil
-        heading.stringValue = kind == .cuts ? "Cut" : "Keyframe"
-        empty.stringValue = kind == .cuts ? "Select a cut (click its bar under the seekbar) to edit it here."
-                                          : "Select a keyframe (click a diamond under the seekbar) to edit it here."
-        empty.isHidden = key != nil || cut != nil
+        let card = kind == .locationCards ? model.selectedCardKeyValue : nil
+        heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : "Keyframe"
+        switch kind {
+        case .cuts: empty.stringValue = "Select a cut (click its bar under the seekbar) to edit it here."
+        case .locationCards: empty.stringValue = "Select a location card (click its diamond under the seekbar) to edit it here."
+        default: empty.stringValue = "Select a keyframe (click a diamond under the seekbar) to edit it here."
+        }
+        empty.isHidden = key != nil || cut != nil || card != nil
         keyForm.isHidden = key == nil
         cutForm.isHidden = cut == nil
+        cardForm.isHidden = card == nil
         func show(_ f: NSTextField, _ x: Double, _ digits: Int) {
             if f.currentEditor() == nil { f.stringValue = String(format: "%.\(digits)f", x) }   // do not clobber typing
         }
@@ -250,11 +268,22 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
             show(timeField, v.time, 2); show(yawField, v.yaw, 1); show(pitchField, v.pitch, 1); show(fovField, v.fov, 1)
         }
         if let cut { show(cutStartField, cut.start, 2); show(cutEndField, cut.end, 2) }
+        if let card {
+            show(cardTimeField, card.time, 2)
+            cardPlacementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: card.placement) ?? 0)
+        }
     }
 
     private func parse(_ f: NSTextField, _ old: Double) -> Double { Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) ?? old }
 
     @objc private func commit() {
+        if model.activeTimeline == .locationCards, let card = model.selectedCardKeyValue {
+            let t = parse(cardTimeField, card.time)
+            cardTimeField.abortEditing()
+            model.editSelectedCardKey(time: t, placement: OverlayPlacement.allCases[max(cardPlacementPopup.indexOfSelectedItem, 0)])
+            refresh()
+            return
+        }
         let cutFields = [cutStartField, cutEndField]
         if model.activeTimeline == .cuts, let cut = model.selectedCutRegion {
             let (s, e) = (parse(cutStartField, cut.start), parse(cutEndField, cut.end))

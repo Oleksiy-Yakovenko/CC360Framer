@@ -7,7 +7,7 @@ enum Exporter {
     struct Failure: LocalizedError { let errorDescription: String? }
 
     /// Blocking; call from a background thread.
-    static func run(overlay: CGImage?, placement: OverlayPlacement, composition: AVMutableComposition, videoComposition: AVVideoComposition,
+    static func run(overlays: OverlayBundle, composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, global: GlobalFov, fallback: (yaw: Float, pitch: Float, fov: Float),
                     stabilizer: Stabilizer?, settings: ExportSettings, timeMap: TimeMap? = nil, to url: URL,
@@ -20,9 +20,8 @@ enum Exporter {
         let duration = max(cutMap?.outputDuration ?? composition.duration.seconds, 0.001)
         let state = ViewState()
         state.stabilizer = stabilizer
-        state.overlayPlacement = placement
         let renderer = try Renderer(device: device, state: state, pixelFormat: .bgra8Unorm)
-        renderer.setOverlay(overlay)
+        renderer.setOverlays(overlays)
 
         let reader = try AVAssetReader(asset: composition)
         let vout = AVAssetReaderVideoCompositionOutput(

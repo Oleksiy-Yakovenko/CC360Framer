@@ -105,9 +105,9 @@ final class PlayerModel: ObservableObject {
     /// Preview only: outline the export aspect in the player (not saved).
     @Published var showExportFrame = false { didSet { viewState.exportFrameAspect = showExportFrame ? exportSettings.aspectValue : nil } }
     private var telemetry: Telemetry?
-    /// Location title card for the first seconds of the clip; nil when the file has no GPS lock.
-    private(set) var overlayImage: CGImage?
-    var onOverlay: ((CGImage?) -> Void)?
+    /// Bitmaps and timing of the overlays (location card; captions later) shared by the preview and the export.
+    private(set) var overlays = OverlayBundle.empty
+    var onOverlays: ((OverlayBundle) -> Void)?
     @Published var overlayPlacement: OverlayPlacement = OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft {
         didSet {
             if !loadingProject { UserDefaults.standard.set(overlayPlacement.rawValue, forKey: "overlayPlacement") }
@@ -115,12 +115,28 @@ final class PlayerModel: ObservableObject {
                 let old = oldValue
                 registerPlacementUndo(old)
             }
-            viewState.overlayPlacement = overlayPlacement
-            rebuildCard()
+            rebuildOverlays()
             if overlayPlacement != oldValue { saveProject() }
         }
     }
     private var restoringPlacement = false
+
+    /// Location card keyframes (source time, each with its own placement); per file in the project sidecar. Once there is
+    /// at least one, only they decide when the card shows (see `LocationCards`).
+    @Published var cardKeys: [LocationCardKey] = [] { didSet { if cardKeys != oldValue { cardsChanged() } } }
+    @Published var selectedCardKey: UUID?
+    /// The implicit card at t = 0 (used while there are no card keyframes); per file in the project sidecar.
+    @Published var autoLocationCard = true { didSet { if autoLocationCard != oldValue { cardsChanged() } } }
+    struct CardKeySnapshot: Equatable { var keys: [LocationCardKey]; var selected: UUID?; var auto: Bool }
+    private(set) lazy var cardKeyUndo = SnapshotUndo<CardKeySnapshot>(
+        manager: undo.manager,
+        capture: { [unowned self] in CardKeySnapshot(keys: cardKeys, selected: selectedCardKey, auto: autoLocationCard) },
+        restore: { [unowned self] s in
+            cardKeys = s.keys
+            selectedCardKey = s.selected
+            autoLocationCard = s.auto
+        })
+    var cardKeyDragStart: CardKeySnapshot?
 
     /// Look of the location card; per file, saved in the project sidecar.
     @Published private(set) var cardStyle = LocationCardStyle()
@@ -132,7 +148,7 @@ final class PlayerModel: ObservableObject {
         capture: { [unowned self] in cardStyle },
         restore: { [unowned self] s in
             cardStyle = s
-            rebuildCard()
+            rebuildOverlays()
             saveProject()
         })
 
@@ -142,7 +158,7 @@ final class PlayerModel: ObservableObject {
         guard new != cardStyle else { return }
         let before = cardStyle
         cardStyle = new
-        rebuildCard()
+        rebuildOverlays()
         saveProject()
         let now = Date()
         if let last = lastCardEdit, last.name == name, now.timeIntervalSince(last.at) < 1 { lastCardEdit = (name, now); return }
@@ -150,8 +166,13 @@ final class PlayerModel: ObservableObject {
         cardUndo.register(before, name)
     }
 
-    private func rebuildCard() {
-        if let place { setOverlay(LocationOverlay.image(for: place, placement: overlayPlacement, style: cardStyle)) }
+    /// Rebuilds the overlay bitmaps and the plan and hands them to the preview (the export reads `overlays` when it starts).
+    func rebuildOverlays() {
+        guard !loadingProject else { return }
+        let plan = OverlayPlan(hasPlace: place != nil, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys)
+        overlays = OverlayBundle.make(place: place, plan: plan, style: cardStyle)
+        onOverlays?(overlays)
+        objectWillChange.send()   // the timeline bar enables Add once a place is known
     }
 
     private func loadProject(for url: URL) {
@@ -162,18 +183,23 @@ final class PlayerModel: ObservableObject {
         globalFov = proj.globalFov ?? GlobalFov.loadDefaults()
         cuts = proj.cuts ?? []
         selectedCut = nil
+        cardKeys = proj.locationCards ?? []
+        selectedCardKey = nil
+        autoLocationCard = proj.autoLocationCard ?? true
         previewWithCuts = proj.previewWithCuts ?? false
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
             ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft
         restoringPlacement = false
         loadingProject = false
+        rebuildOverlays()
     }
 
     func saveProject() {
         guard !loadingProject, let sourceURL else { return }
         ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov,
-                       cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil).save(for: sourceURL)
+                       cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil,
+                       locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false).save(for: sourceURL)
     }
 
     var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }
@@ -204,7 +230,7 @@ final class PlayerModel: ObservableObject {
         }
         undoManager.setActionName("Change Location Card Placement")
     }
-    private var place: PlaceInfo?
+    private(set) var place: PlaceInfo?
     private var placeTask: Task<Void, Never>?
     private(set) var stabilizer: Stabilizer?
     /// Raw detections from the last analysis; lets the style change without re-analysing.
@@ -321,17 +347,11 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    private func setOverlay(_ image: CGImage?) {
-        overlayImage = image
-        onOverlay?(image)
-    }
-
     /// Looks up the place name for the first GPS fix (cached next to the video) and builds the title card.
     private func loadPlace(for url: URL) {
         placeTask?.cancel()
-        setOverlay(nil)
         place = nil
-        viewState.overlayPlacement = overlayPlacement
+        rebuildOverlays()
         guard let fix = telemetry?.gps else { placeTask = nil; return }
         placeTask = Task { [weak self] in
             let info: PlaceInfo
@@ -342,7 +362,7 @@ final class PlayerModel: ObservableObject {
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.place = info
-            self.setOverlay(LocationOverlay.image(for: info, placement: self.overlayPlacement, style: self.cardStyle))
+            self.rebuildOverlays()
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines.joined(separator: " | "))"); fflush(stdout) }
         }
     }
@@ -694,13 +714,12 @@ extension PlayerModel {
         let global = globalFov
         let box = UncheckedBox((comp, vc, mix, stabilizer))
         let pending = placeTask
-        let placement = overlayPlacement
         let map = timeMap(crossfade: settings.crossfade)
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 await pending?.value   // make sure the location lookup has finished
-                let overlay = await MainActor.run { self?.overlayImage }
-                try Exporter.run(overlay: overlay, placement: placement, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
+                let overlays = await MainActor.run { self?.overlays ?? .empty }
+                try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
                                  audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }

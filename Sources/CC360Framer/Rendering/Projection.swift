@@ -27,8 +27,6 @@ final class ViewState {
     var stabilizer: Stabilizer?
     /// Time of the frame being drawn, used to look up the stabilised camera.
     var frameTime: Double = 0
-    /// Corner / edge / centre the location card is drawn at.
-    var overlayPlacement: OverlayPlacement = .bottomLeft
     /// Preview only: aspect (width / height) of the export frame to outline; nil = hidden.
     /// True while a global fov is set: scroll/pinch zoom is ignored (the slider in the Export tab is the control).
     var fovLocked = false
