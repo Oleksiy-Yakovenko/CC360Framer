@@ -33,7 +33,7 @@ final class StylesTests: XCTestCase {
     }
 
     func testFollowKeyframesPointAtSubject() {
-        let obs = stride(from: 0.0, through: 30, by: 1.2).map { Observation(t: $0, people: [cand(0.5, 0.1)], salient: []) }
+        let obs = stride(from: 0.0, through: 30, by: 0.2).map { Observation(t: $0, people: [cand(0.5, 0.1)], salient: []) }
         let keys = PathStyle.follow.keyframes(from: obs, duration: 30, fov: 70)
         XCTAssertFalse(keys.isEmpty)
         for k in keys {

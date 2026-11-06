@@ -6,7 +6,13 @@ enum PathStyle: String, CaseIterable, Identifiable {
     case scenery = "Scenery + rider"
     var id: String { rawValue }
 
-    func keyframes(from obs: [Observation], duration: Double, fov: Float) -> [Keyframe] {
+    /// The camera only follows people and objects that stay detected for at least this long (seconds).
+    static let minTrackDuration = 2.0
+
+    func keyframes(from allObs: [Observation], duration: Double, fov: Float) -> [Keyframe] {
+        // Single entry point for both styles: drop short-lived detections (see DetectionTracks.filter
+        // for the clip-boundary rule: strict per track, but clips shorter than the minimum are left alone).
+        let obs = DetectionTracks.filter(allObs, minDuration: Self.minTrackDuration, clipDuration: duration)
         switch self {
         case .follow:
             return PathBuilder.build(samples: Self.followSamples(obs), duration: duration, fov: fov)
