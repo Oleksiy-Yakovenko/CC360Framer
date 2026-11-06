@@ -21,11 +21,6 @@ final class OverlayTests: XCTestCase {
         XCTAssertEqual(OverlayPlacement.bottomRight.anchor.y, -1)
     }
 
-    func testSidecarURL() {
-        let u = PlaceInfo.sidecar(for: URL(fileURLWithPath: "/x/GS01.360"))
-        XCTAssertEqual(u.lastPathComponent, "GS01.360.location.json")
-    }
-
     func testCancelFlag() {
         let f = CancelFlag()
         XCTAssertFalse(f.isSet)

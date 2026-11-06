@@ -1,7 +1,7 @@
 import AppKit
 import CoreLocation
 
-/// Where a clip was filmed: GPS position plus the reverse-geocoded place names. Cached in `<file>.location.json`
+/// Where a clip was filmed: GPS position plus the reverse-geocoded place names. Cached as a `location` sidecar (see `Sidecar`)
 /// so later opens and exports work offline.
 struct PlaceInfo: Codable, Equatable {
     var latitude: Double
@@ -9,10 +9,8 @@ struct PlaceInfo: Codable, Equatable {
     var country: String?
     var place: String?
 
-    static func sidecar(for url: URL) -> URL { url.appendingPathExtension("location.json") }
-
     static func cached(for url: URL, matching fix: Telemetry.GPSFix) -> PlaceInfo? {
-        guard let data = try? Data(contentsOf: sidecar(for: url)), let p = try? JSONDecoder().decode(PlaceInfo.self, from: data),
+        guard let data = Sidecar.read(for: url, kind: "location"), let p = try? JSONDecoder().decode(PlaceInfo.self, from: data),
               abs(p.latitude - fix.latitude) < 1e-6, abs(p.longitude - fix.longitude) < 1e-6 else { return nil }
         return p
     }
@@ -28,7 +26,7 @@ struct PlaceInfo: Codable, Equatable {
             // "Street, City" reads better than a lone venue or neighbourhood name.
             [first, mark.locality].compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: ", ")
         } ?? mark.administrativeArea
-        if let data = try? JSONEncoder().encode(info) { try? data.write(to: sidecar(for: url)) }
+        if let data = try? JSONEncoder().encode(info) { Sidecar.write(data, for: url, kind: "location") }
         return info
     }
 

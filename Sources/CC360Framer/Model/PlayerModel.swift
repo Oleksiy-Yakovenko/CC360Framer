@@ -330,30 +330,26 @@ final class PlayerModel: ObservableObject {
 // MARK: - Camera path, analysis, export
 
 extension PlayerModel {
-    private func sidecar(for url: URL) -> URL { url.appendingPathExtension("reframe.json") }
-
     private func loadKeyframes(for url: URL) -> [Keyframe] {
-        guard let data = try? Data(contentsOf: sidecar(for: url)) else { return [] }
+        guard let data = Sidecar.read(for: url, kind: "reframe") else { return [] }
         return (try? JSONDecoder().decode([Keyframe].self, from: data)) ?? []
     }
 
-    private func analysisURL(for url: URL) -> URL { url.appendingPathExtension("analysis.json") }
-
     private func loadObservations(for url: URL) -> [Observation] {
-        guard let data = try? Data(contentsOf: analysisURL(for: url)) else { return [] }
+        guard let data = Sidecar.read(for: url, kind: "analysis") else { return [] }
         return (try? JSONDecoder().decode([Observation].self, from: data)) ?? []
     }
 
     private func saveObservations() {
         guard let sourceURL, let data = try? JSONEncoder().encode(observations) else { return }
-        try? data.write(to: analysisURL(for: sourceURL))
+        Sidecar.write(data, for: sourceURL, kind: "analysis")
     }
 
     private func saveKeyframes() {
         guard let sourceURL else { return }
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(keyframes) { try? data.write(to: sidecar(for: sourceURL)) }
+        if let data = try? enc.encode(keyframes) { Sidecar.write(data, for: sourceURL, kind: "reframe") }
     }
 
     /// Called every draw: while following, the view tracks the camera path at the playhead.

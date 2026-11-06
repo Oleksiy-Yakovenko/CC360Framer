@@ -11,3 +11,5 @@
 *~
 .*.un~
 .DS_Store
+*.sidecars/
+*.project.json
