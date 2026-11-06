@@ -499,6 +499,7 @@ final class LookView: MTKView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard UserLook.dragCounts(deltaX: Double(event.deltaX), deltaY: Double(event.deltaY)) else { return }
         state.onUserLook?()
         // Sensitivity scales with zoom so the scene follows the cursor.
         var fov = Double(state.fovDegrees)
@@ -514,6 +515,7 @@ final class LookView: MTKView {
 
     override func scrollWheel(with event: NSEvent) {
         guard !state.fovLocked else { return }
+        guard UserLook.scrollCounts(deltaY: Double(event.scrollingDeltaY), inMomentum: !event.momentumPhase.isEmpty) else { return }
         state.onUserLook?()
         let dy = Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.2 : 1.5)
         state.fovDegrees = max(20, min(140, state.fovDegrees - dy))
@@ -521,6 +523,7 @@ final class LookView: MTKView {
 
     override func magnify(with event: NSEvent) {
         guard !state.fovLocked else { return }
+        guard UserLook.magnifyCounts(magnification: Double(event.magnification)) else { return }
         state.onUserLook?()
         state.fovDegrees = max(20, min(140, state.fovDegrees * (1 - Float(event.magnification))))
     }

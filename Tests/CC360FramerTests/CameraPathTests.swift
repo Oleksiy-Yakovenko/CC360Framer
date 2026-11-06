@@ -2,6 +2,32 @@ import XCTest
 @testable import CC360Framer
 
 final class CameraPathTests: XCTestCase {
+    func testUserLookIgnoresMomentumAndZeroDeltas() {
+        XCTAssertFalse(UserLook.dragCounts(deltaX: 0, deltaY: 0))
+        XCTAssertTrue(UserLook.dragCounts(deltaX: 0, deltaY: -1))
+        XCTAssertFalse(UserLook.scrollCounts(deltaY: 3, inMomentum: true))
+        XCTAssertFalse(UserLook.scrollCounts(deltaY: 0, inMomentum: false))
+        XCTAssertTrue(UserLook.scrollCounts(deltaY: 3, inMomentum: false))
+        XCTAssertFalse(UserLook.magnifyCounts(magnification: 0))
+        XCTAssertTrue(UserLook.magnifyCounts(magnification: 0.01))
+    }
+
+    func testSamplingAtManualKeysReturnsKeyValues() throws {
+        let rows: [(Double, Double, Double, Float)] = [
+            (92.0, 0, 0, 70), (102.527, 61.4, -2.1, 70.0), (103.925, 85.0, -3.8, 70.1),
+            (104.956, 131.5, -6.8, 85.6), (105.692, 157.9, -3.0, 85.6), (106.428, 168.5, -3.8, 83.1),
+            (109.8, 0, 0, 70),
+        ]
+        let keys = rows.map { Keyframe(time: $0.0, yaw: Float($0.1 * .pi / 180), pitch: Float($0.2 * .pi / 180), fov: $0.3) }
+        let path = CameraPath(keys: keys)
+        for k in keys {
+            let s = try XCTUnwrap(path.sample(at: k.time))
+            XCTAssertEqual(wrapAngle(s.yaw - k.yaw), 0, accuracy: 1e-4, "yaw at \(k.time)")
+            XCTAssertEqual(s.pitch, k.pitch, accuracy: 1e-4, "pitch at \(k.time)")
+            XCTAssertEqual(s.fov, k.fov, accuracy: 1e-3, "fov at \(k.time)")
+        }
+    }
+
     func testWrapAngle() {
         XCTAssertEqual(wrapAngle(3 * .pi / 2), -.pi / 2, accuracy: 1e-5)
         XCTAssertEqual(wrapAngle(-3 * .pi / 2), .pi / 2, accuracy: 1e-5)

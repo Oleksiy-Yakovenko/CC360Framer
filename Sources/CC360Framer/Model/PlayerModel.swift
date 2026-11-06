@@ -420,7 +420,13 @@ final class PlayerModel: ObservableObject {
             installObservers(item)
             viewState.reset()
             viewState.onUserLook = { [weak self] in
-                MainActor.assumeIsolated { self?.autoFollow = false }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.autoFollow && !self.keyframes.isEmpty {
+                        self.statusText = "Auto off: you moved the view. Press Auto to follow the keyframes."
+                    }
+                    self.autoFollow = false
+                }
             }
             telemetry = Telemetry.load(url: url)
             loadProject(for: url)
