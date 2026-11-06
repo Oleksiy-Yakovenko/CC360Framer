@@ -4,3 +4,9 @@
 *.reframe.json
 *.analysis.json
 *.location.json
+.swiftpm/
+# vim
+*.swp
+*.swo
+*~
+.*.un~
