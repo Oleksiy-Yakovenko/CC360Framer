@@ -382,6 +382,8 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm], topAnchor: view.topAnchor)
     }
 
+    private var shownItemID: UUID?
+
     override func refresh() {
         let kind = model.activeTimeline
         let key = kind == .keyframes ? model.selectedKeyframe : nil
@@ -400,6 +402,14 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cutForm.isHidden = cut == nil
         cardForm.isHidden = card == nil
         captionForm.isHidden = caption == nil
+        // A different item than the one last shown: discard any edit in progress (abortEditing does not
+        // fire the action, so the old text is never written into the new item), then show its values.
+        let selectedID: UUID? = key?.id ?? cut?.id ?? card?.id ?? caption?.id
+        if InspectorFocus.shouldResetFields(shown: shownItemID, selected: selectedID) {
+            for f in fields { f.abortEditing() }
+            if caption != nil, capTextView.window?.firstResponder === capTextView { capTextView.string = caption?.text ?? "" }
+        }
+        shownItemID = selectedID
         func show(_ f: NSTextField, _ x: Double, _ digits: Int) {
             if f.currentEditor() == nil { f.stringValue = String(format: "%.\(digits)f", x) }   // do not clobber typing
         }
