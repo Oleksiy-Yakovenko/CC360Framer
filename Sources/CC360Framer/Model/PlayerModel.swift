@@ -279,43 +279,18 @@ final class PlayerModel: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: Any?
     fileprivate var scrubbing = false
-    private var tempDir: URL?
+    private var session: MediaSession?
 
     func open(_ url: URL) async {
         do {
             errorText = nil
             player.pause()
             isPlaying = false
-            let (asset, tracks, duration) = try await loadAsset(url)
-            let videos = tracks.filter { $0.mediaType == .video }
-            guard videos.count == 2 else {
-                throw NSError(domain: "CC360Framer", code: 2, userInfo: [NSLocalizedDescriptionKey:
-                    "Expected a two-track 360 file, found \(videos.count) video track(s)."])
-            }
-            let frameDuration = try await videos[0].load(.minFrameDuration)
-            let size = try await videos[0].load(.naturalSize)
-
-            let comp = AVMutableComposition()
-            let range = CMTimeRange(start: .zero, duration: duration)
-            var videoIDs: [CMPersistentTrackID] = []
-            for t in videos {
-                let ct = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
-                try ct.insertTimeRange(range, of: t, at: .zero)
-                videoIDs.append(ct.trackID)
-            }
-            var options: [AudioOption] = []
-            for (i, t) in tracks.filter({ $0.mediaType == .audio }).enumerated() {
-                let ct = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
-                try ct.insertTimeRange(range, of: t, at: .zero)
-                let descs = try await t.load(.formatDescriptions)
-                options.append(AudioOption(id: ct.trackID, label: Self.describe(descs.first, index: i), enabled: i == 0))
-            }
-
-            let vc = AVMutableVideoComposition()
-            vc.customVideoCompositorClass = StackCompositor.self
-            vc.frameDuration = frameDuration.isValid && frameDuration.seconds > 0 ? frameDuration : CMTime(value: 1001, timescale: 30000)
-            vc.renderSize = CGSize(width: size.width, height: size.height * 2)
-            vc.instructions = [StackInstruction(timeRange: range, trackIDs: videoIDs)]
+            let session = try await MediaSession.open(url)
+            let comp = session.composition
+            let vc = session.videoComposition
+            let duration = session.duration
+            let options = session.audioOptions
 
             let item = AVPlayerItem(asset: comp)
             item.videoComposition = vc
@@ -325,11 +300,13 @@ final class PlayerModel: ObservableObject {
             ])
             item.add(output)
 
+            self.session?.cleanup()
+            self.session = session
             self.composition = comp
             self.videoComposition = vc
             self.sourceURL = url
-            self.sourceAsset = asset
-            self.sourceVideoTracks = videos
+            self.sourceAsset = session.asset
+            self.sourceVideoTracks = session.videoTracks
             self.audioOptions = options
             item.audioMix = audioMix()
             self.item = item
@@ -394,74 +371,10 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    /// Opens the container. AVFoundation rejects the `.360` extension, but it is plain MP4: first try the file directly
-    /// with the MIME type forced to `video/mp4` (no temporary files); if that fails, open it through a temporary
-    /// `.mp4` symlink in a per-model directory. `CC360_FORCE_SYMLINK=1` skips the direct attempt.
-    private func loadAsset(_ url: URL) async throws -> (AVURLAsset, [AVAssetTrack], CMTime) {
-        if url.pathExtension.lowercased() == "360" {
-            if ProcessInfo.processInfo.environment["CC360_FORCE_SYMLINK"] == nil {
-                let direct = AVURLAsset(url: url, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
-                if let tracks = try? await direct.load(.tracks), tracks.contains(where: { $0.mediaType == .video }),
-                   let duration = try? await direct.load(.duration) {
-                    removeTempDir()
-                    return (direct, tracks, duration)
-                }
-            }
-            let asset = AVURLAsset(url: try playableURL(url))
-            let (tracks, duration) = try await asset.load(.tracks, .duration)
-            return (asset, tracks, duration)
-        }
-        removeTempDir()
-        let asset = AVURLAsset(url: url)
-        let (tracks, duration) = try await asset.load(.tracks, .duration)
-        return (asset, tracks, duration)
-    }
-
-    /// Symlink fallback; the directory is unique per model so several windows never share or delete each other's links.
-    private func playableURL(_ url: URL) throws -> URL {
-        removeTempDir()
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CC360Framer-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        tempDir = dir
-        let link = dir.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".mp4")
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
-        return link
-    }
-
-    private func removeTempDir() {
-        if let tempDir { try? FileManager.default.removeItem(at: tempDir) }
-        tempDir = nil
-    }
-
-    func cleanup() { removeTempDir() }
-
-    private static func describe(_ desc: CMFormatDescription?, index: Int) -> String {
-        guard let desc, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee else {
-            return "Audio \(index + 1)"
-        }
-        let ch = Int(asbd.mChannelsPerFrame)
-        let kind: String
-        switch ch {
-        case 1: kind = "mono"
-        case 2: kind = "stereo"
-        case 4: kind = "4ch ambisonic"
-        default: kind = "\(ch)ch"
-        }
-        let codec = asbd.mFormatID == kAudioFormatMPEG4AAC ? "AAC" : (asbd.mFormatID == kAudioFormatLinearPCM ? "PCM" : "audio")
-        return "\(index + 1): \(codec) \(kind)"
-    }
+    func cleanup() { session?.cleanup() }
 
     fileprivate func audioMix() -> AVAudioMix? {
-        guard let composition else { return nil }
-        let mix = AVMutableAudioMix()
-        mix.inputParameters = audioOptions.compactMap { opt in
-            guard let track = composition.track(withTrackID: opt.id) else { return nil }
-            let p = AVMutableAudioMixInputParameters(track: track)
-            p.setVolume(opt.enabled ? 1 : 0, at: .zero)
-            return p
-        }
-        return mix
+        session?.audioMix(for: audioOptions)
     }
 
     func toggleAudio(_ id: CMPersistentTrackID) {
