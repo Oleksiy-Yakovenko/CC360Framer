@@ -691,12 +691,13 @@ extension PlayerModel {
         let box = UncheckedBox((comp, vc, mix, stabilizer))
         let pending = placeTask
         let placement = overlayPlacement
+        let map = timeMap(crossfade: settings.crossfade)
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 await pending?.value   // make sure the location lookup has finished
                 let overlay = await MainActor.run { self?.overlayImage }
                 try Exporter.run(overlay: overlay, placement: placement, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
-                                 audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, to: url,
+                                 audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
             } catch {

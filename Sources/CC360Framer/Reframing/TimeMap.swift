@@ -31,6 +31,8 @@ struct TimeMap: Equatable {
         var from: Double
         var to: Double?
         var mix: Double
+        /// Index into `segments` of the one `from` belongs to; `to` belongs to the next one.
+        var segment = 0
     }
 
     /// Shortest cut or kept segment that is still considered real (below this, regions are dropped / merged).
@@ -102,10 +104,10 @@ struct TimeMap: Equatable {
                 // Inside the overlap: the previous segment is still running underneath.
                 let prev = segments[i - 1]
                 let outgoing = min(prev.sourceStart + (t - prev.outputStart), prev.sourceEnd)
-                return Sample(from: outgoing, to: from, mix: max(0, min(1, into / fades[i - 1])))
+                return Sample(from: outgoing, to: from, mix: max(0, min(1, into / fades[i - 1])), segment: i - 1)
             }
         }
-        return Sample(from: from, to: nil, mix: 0)
+        return Sample(from: from, to: nil, mix: 0, segment: i)
     }
 
     /// Source time shown (mostly) at output time `t`: the incoming segment once a dissolve is past half-way.
