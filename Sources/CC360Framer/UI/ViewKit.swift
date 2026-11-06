@@ -113,6 +113,32 @@ enum Kit {
         return w
     }
 
+    /// Editable combo box with preset sizes: pick one or type any number (see `SizeInput`); the action fires on selection and Return.
+    static func sizeCombo(presets: [Double], tip: String, target: AnyObject, action: Selector) -> NSComboBox {
+        let c = NSComboBox()
+        c.addItems(withObjectValues: presets.map(SizeInput.format))
+        c.numberOfVisibleItems = presets.count
+        c.completes = false
+        c.toolTip = tip
+        c.target = target
+        c.action = action
+        c.widthAnchor.constraint(equalToConstant: 84).isActive = true
+        return c
+    }
+
+    /// Shows `value` unless the user is typing in the combo box.
+    static func setSize(_ c: NSComboBox, _ value: Double) {
+        if c.currentEditor() == nil { c.stringValue = SizeInput.format(value) }
+    }
+
+    /// The size picked or typed in the combo box, clamped; unparsable text goes back to `current` (and is shown again).
+    static func readSize(_ c: NSComboBox, range: ClosedRange<Double>, step: Double = 1, current: Double) -> Double {
+        let text = c.indexOfSelectedItem >= 0 ? (c.objectValueOfSelectedItem as? String ?? c.stringValue) : c.stringValue
+        let v = SizeInput.parse(text, range: range, step: step) ?? current
+        c.stringValue = SizeInput.format(v)
+        return v
+    }
+
     /// Popup listing the installed font families; the represented object of each item is the family name.
     static func fontPopup(selected: String? = nil, tip: String, target: AnyObject, action: Selector) -> NSPopUpButton {
         let p = popup(NSFontManager.shared.availableFontFamilies, tip: tip, target: target, action: action)

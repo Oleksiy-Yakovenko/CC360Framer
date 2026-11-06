@@ -27,7 +27,7 @@ final class ExportTabViewController: ModelViewController {
     private let fovValue = NSTextField(labelWithString: "70°")
     private var capPlacement = NSPopUpButton()
     private var capFont = NSPopUpButton()
-    private let capSize = NSSlider(value: 5.5, minValue: 2, maxValue: 15, target: nil, action: nil)
+    private var capSize = NSComboBox()
     private var capFill = NSColorWell()
     private var capStroke = NSColorWell()
     private let capStrokeWidth = NSSlider(value: 7, minValue: 0, maxValue: 20, target: nil, action: nil)
@@ -59,8 +59,8 @@ final class ExportTabViewController: ModelViewController {
                                  target: self, action: #selector(captionStyleChanged))
         capFont = Kit.fontPopup(tip: "Default caption font family", target: self, action: #selector(captionStyleChanged))
         capFont.insertItem(withTitle: CaptionStyle.systemFontName, at: 0)
-        capSize.target = self; capSize.action = #selector(captionStyleChanged)
-        capSize.toolTip = "Font size as a percentage of the frame's short side, so it looks the same at every export size"
+        capSize = Kit.sizeCombo(presets: [3, 4, 5.5, 7, 9, 12, 15], tip: "Font size as a percentage of the frame's short side (2 to 15, pick a preset or type a number), so it looks the same at every export size",
+                                target: self, action: #selector(captionStyleChanged))
         capFill = Kit.colorWell(.white, tip: "Default caption text colour", target: self, action: #selector(captionStyleChanged))
         capStroke = Kit.colorWell(.black, tip: "Default caption outline colour", target: self, action: #selector(captionStyleChanged))
         capStrokeWidth.target = self; capStrokeWidth.action = #selector(captionStyleChanged)
@@ -96,7 +96,7 @@ final class ExportTabViewController: ModelViewController {
         let cs = model.captionStyle
         capPlacement.selectItem(at: OverlayPlacement.allCases.firstIndex(of: cs.placement) ?? 0)
         capFont.selectItem(withTitle: cs.fontName ?? CaptionStyle.systemFontName)
-        capSize.doubleValue = cs.size * 100
+        Kit.setSize(capSize, cs.size * 100)
         capStrokeWidth.doubleValue = cs.strokeWidth
         if capFill.color != cs.fill.nsColor { capFill.color = cs.fill.nsColor }
         if capStroke.color != cs.stroke.nsColor { capStroke.color = cs.stroke.nsColor }
@@ -119,7 +119,7 @@ final class ExportTabViewController: ModelViewController {
         var s = model.captionStyle
         s.placement = OverlayPlacement.allCases[max(capPlacement.indexOfSelectedItem, 0)]
         s.fontName = capFont.indexOfSelectedItem == 0 ? nil : capFont.titleOfSelectedItem
-        s.size = (capSize.doubleValue * 2).rounded() / 200
+        s.size = Kit.readSize(capSize, range: CaptionStyle.sizeRange.lowerBound * 100...CaptionStyle.sizeRange.upperBound * 100, step: 0.1, current: s.size * 100) / 100
         s.strokeWidth = capStrokeWidth.doubleValue.rounded()
         s.fill = CardColor(capFill.color)
         s.stroke = CardColor(capStroke.color)
@@ -182,7 +182,7 @@ final class AudioTabViewController: ModelViewController {
 final class LocationTabViewController: ModelViewController {
     private var placementPopup = NSPopUpButton()
     private var fontPopup = NSPopUpButton()
-    private let sizeSlider = NSSlider(value: 64, minValue: 24, maxValue: 120, target: nil, action: nil)
+    private var sizeCombo = NSComboBox()
     private var fillWell = NSColorWell()
     private var strokeWell = NSColorWell()
     private let strokeSlider = NSSlider(value: 0, minValue: 0, maxValue: 12, target: nil, action: nil)
@@ -210,8 +210,8 @@ final class LocationTabViewController: ModelViewController {
                                    target: self, action: #selector(placementChosen))
         fontPopup = Kit.fontPopup(tip: "Font family of the card", target: self, action: #selector(styleChanged))
         fontPopup.insertItem(withTitle: "System", at: 0)
-        sizeSlider.target = self; sizeSlider.action = #selector(styleChanged)
-        sizeSlider.toolTip = "Size of the first line in points; the other lines scale with it"
+        sizeCombo = Kit.sizeCombo(presets: LocationCardStyle.sizePresets, tip: "Size of the first line in points at a 1080 px short side (scales with the frame); the other lines scale with it. Pick a preset or type a number, 8 to 400.",
+                                  target: self, action: #selector(styleChanged))
         strokeSlider.target = self; strokeSlider.action = #selector(styleChanged)
         strokeSlider.toolTip = "Outline width in points (0 = none)"
         fillWell = Kit.colorWell(.white, tip: "Text colour", target: self, action: #selector(styleChanged))
@@ -224,7 +224,7 @@ final class LocationTabViewController: ModelViewController {
             placementPopup,
         ] + fieldChecks.map(\.button) + [
             Kit.labeledRow("Font", fontPopup),
-            Kit.labeledRow("Size", sizeSlider, tip: "Size of the first line in points"),
+            Kit.labeledRow("Size", sizeCombo, tip: "Size of the first line in points (1080 px short side)"),
             Kit.labeledRow("Colour", fillWell, tip: "Text colour"),
             Kit.labeledRow("Outline", strokeWell, tip: "Outline colour"),
             Kit.labeledRow("Width", strokeSlider, tip: "Outline width in points"),
@@ -236,7 +236,7 @@ final class LocationTabViewController: ModelViewController {
         placementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: model.overlayPlacement) ?? 0)
         let s = model.cardStyle
         fontPopup.selectItem(withTitle: s.fontName ?? "System")
-        sizeSlider.doubleValue = s.baseSize
+        Kit.setSize(sizeCombo, s.baseSize)
         strokeSlider.doubleValue = s.strokeWidth
         if fillWell.color != s.fill.nsColor { fillWell.color = s.fill.nsColor }
         if strokeWell.color != s.stroke.nsColor { strokeWell.color = s.stroke.nsColor }
@@ -267,14 +267,14 @@ final class LocationTabViewController: ModelViewController {
     @objc private func styleChanged(_ sender: Any?) {
         var s = model.cardStyle
         s.fontName = fontPopup.indexOfSelectedItem == 0 ? nil : fontPopup.titleOfSelectedItem
-        s.baseSize = sizeSlider.doubleValue.rounded()
+        s.baseSize = Kit.readSize(sizeCombo, range: LocationCardStyle.sizeRange, current: s.baseSize)
         s.strokeWidth = (strokeSlider.doubleValue * 2).rounded() / 2
         s.fill = CardColor(fillWell.color)
         s.stroke = CardColor(strokeWell.color)
         let name: String
         switch sender as AnyObject? {
         case let o where o === fontPopup: name = "Change Card Font"
-        case let o where o === sizeSlider: name = "Change Card Size"
+        case let o where o === sizeCombo: name = "Change Card Size"
         case let o where o === fillWell: name = "Change Card Colour"
         default: name = "Change Card Outline"
         }

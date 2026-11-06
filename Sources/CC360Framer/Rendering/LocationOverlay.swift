@@ -156,6 +156,9 @@ struct CardColor: Codable, Equatable {
 /// a soft black shadow and no outline.
 struct LocationCardStyle: Codable, Equatable {
     static let defaultBaseSize = 64.0
+    /// Sizes the Location tab's combo box offers, and the range accepted when typing one.
+    static let sizePresets: [Double] = [24, 32, 44, 64, 80, 96, 128, 160]
+    static let sizeRange = 8.0...400.0
 
     /// Font family; nil = the system font.
     var fontName: String?
