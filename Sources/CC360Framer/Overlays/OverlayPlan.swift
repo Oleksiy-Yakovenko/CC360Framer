@@ -111,6 +111,19 @@ enum OverlayLayout {
     }
 }
 
+extension OverlayLayout {
+    /// Like `rect`, but the overlay is laid out inside `frame` (pixels of the target, origin bottom-left) instead of the whole
+    /// target: the preview's export-frame guide, so cards and captions sit where they will in the export. The result is in the
+    /// target's NDC.
+    static func rect(texWidth: Int, texHeight: Int, targetWidth: Float, targetHeight: Float, frame: (x: Float, y: Float, width: Float, height: Float),
+                     placement: OverlayPlacement, size: OverlaySize) -> (x0: Float, y0: Float, x1: Float, y1: Float) {
+        let r = rect(texWidth: texWidth, texHeight: texHeight, targetWidth: frame.width, targetHeight: frame.height, placement: placement, size: size)
+        func nx(_ v: Float) -> Float { 2 * (frame.x + (v + 1) / 2 * frame.width) / targetWidth - 1 }
+        func ny(_ v: Float) -> Float { 2 * (frame.y + (v + 1) / 2 * frame.height) / targetHeight - 1 }
+        return (nx(r.x0), ny(r.y0), nx(r.x1), ny(r.y1))
+    }
+}
+
 /// Overlay bitmaps are rasterised at the pixel scale they are drawn at (bitmap pixel == target pixel), so text stays crisp
 /// at every preview window size and export size.
 enum OverlayScale {

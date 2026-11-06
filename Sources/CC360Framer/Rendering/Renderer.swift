@@ -259,13 +259,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     /// Composites every overlay that is active at the frame's (source) time, in plan order, over the picture.
-    private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float) {
+    private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float, frame: (x: Float, y: Float, width: Float, height: Float)) {
         overlayLock.lock()
         let plan = overlayPlan, textures = overlayTextures, built = overlayBuiltShort
         overlayLock.unlock()
         for d in plan.draws(at: state.frameTime, builtShort: built) {
             guard let tex = textures[d.key]?.texture else { continue }
-            let r = OverlayLayout.rect(texWidth: tex.width, texHeight: tex.height, targetWidth: targetWidth, targetHeight: targetHeight,
+            let r = OverlayLayout.rect(texWidth: tex.width, texHeight: tex.height, targetWidth: targetWidth, targetHeight: targetHeight, frame: frame,
                                        placement: d.placement, size: d.size)
             var u: [Float] = [r.x0, r.y0, r.x1, r.y1, d.alpha, 0, 0, 0]
             enc.setRenderPipelineState(overlayPipeline)
@@ -318,10 +318,19 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// `showGuide` is for the on-screen preview only; renderSync (export, snapshots) never draws it.
     func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float, size: CGSize, showGuide: Bool = false) {
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        // Guide on (preview only): render so the guide rectangle is exactly the exported field of view; overlays are laid out inside it.
+        let guideAspect = showGuide && size.height > 0 ? state.exportFrameAspect : nil
+        var fovScale: Float = 1
+        var frame = (x: Float(0), y: Float(0), width: Float(size.width), height: Float(size.height))
+        if let ea = guideAspect {
+            fovScale = Float(ExportFrame.previewFovScale(previewAspect: Double(size.width / size.height), exportAspect: ea))
+            let r = ExportFrame.pixelRect(width: Double(size.width), height: Double(size.height), exportAspect: ea)
+            frame = (Float(r.x), Float(r.y), Float(r.width), Float(r.height))
+        }
         if let texture {
             let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
             var u = Uniforms(yaw: state.yaw, pitch: state.pitch,
-                             tanHalfFov: tan(state.fovDegrees * .pi / 360), aspect: aspect,
+                             tanHalfFov: tan(state.fovDegrees * .pi / 360) * fovScale, aspect: aspect,
                              cfg: state.cfg, mode: state.mode, yuv: chroma == nil ? 0 : 1,
                              right: SIMD4(b.right, 0), up: SIMD4(b.up, 0), forward: SIMD4(b.forward, 0))
             enc.setRenderPipelineState(pipeline)
@@ -331,8 +340,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
-        drawOverlay(enc, targetWidth: Float(size.width), targetHeight: Float(size.height))
-        if showGuide, let ea = state.exportFrameAspect, size.height > 0 {
+        drawOverlay(enc, targetWidth: Float(size.width), targetHeight: Float(size.height), frame: frame)
+        if let ea = guideAspect {
             let h = ExportFrame.halfExtent(previewAspect: Double(size.width / size.height), exportAspect: ea)
             var g: [Float] = [Float(h.x), Float(h.y), Float(size.width), Float(size.height)]
             enc.setRenderPipelineState(guidePipeline)
@@ -343,6 +352,13 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    /// Size the overlays are drawn into in the preview: the export-frame guide when it is on, else the whole drawable.
+    private func overlayFrameSize(of size: CGSize) -> CGSize {
+        guard let ea = state.exportFrameAspect, size.width > 0, size.height > 0 else { return size }
+        let r = ExportFrame.pixelRect(width: Double(size.width), height: Double(size.height), exportAspect: ea)
+        return CGSize(width: r.width, height: r.height)
+    }
 
     /// Asks (debounced) for overlay bitmaps matching the preview's drawable size, so live resizing does not re-rasterise per frame.
     private func noteOverlayTarget(_ size: CGSize) {
@@ -373,7 +389,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
         let size = view.drawableSize
-        noteOverlayTarget(size)
+        noteOverlayTarget(overlayFrameSize(of: size))
         encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)), size: size, showGuide: true)
         cb.present(drawable)
         if Pacing.enabled {
@@ -419,7 +435,11 @@ final class LookView: MTKView {
     override func mouseDragged(with event: NSEvent) {
         state.onUserLook?()
         // Sensitivity scales with zoom so the scene follows the cursor.
-        let perPixel = state.fovDegrees * .pi / 180 / Float(max(bounds.height, 1))
+        var fov = Double(state.fovDegrees)
+        if let ea = state.exportFrameAspect, bounds.height > 0 {   // the guide changes the fov the preview is drawn with
+            fov = ExportFrame.previewFovDegrees(fov: fov, previewAspect: Double(bounds.width / bounds.height), exportAspect: ea)
+        }
+        let perPixel = Float(fov) * .pi / 180 / Float(max(bounds.height, 1))
         state.yaw -= Float(event.deltaX) * perPixel
         state.pitch += Float(event.deltaY) * perPixel
         state.pitch = max(-1.55, min(1.55, state.pitch))
