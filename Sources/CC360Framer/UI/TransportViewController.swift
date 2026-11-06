@@ -13,7 +13,7 @@ final class ScrubSlider: NSSlider {
     }
 }
 
-/// Markers of the active timeline under the seekbar: diamonds for points, bars with draggable edges for regions.
+/// Markers of the active timeline on a black strip above the seekbar: diamonds for points, bars with draggable edges for regions.
 /// Click selects (and seeks); dragging a region edge resizes it.
 final class TimelineMarkersView: NSView {
     var adapter: TimelineAdapter?
@@ -23,16 +23,20 @@ final class TimelineMarkersView: NSView {
     private var dragging: (id: UUID, edge: RegionEdit.Edge)?
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 14) }
+    /// Height of the strip above the seekbar.
+    static let height: CGFloat = 32
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height) }
 
     private var layoutInfo: TimelineLayout { TimelineLayout(width: bounds.width, duration: duration) }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.setFill()
+        bounds.fill()
         let l = layoutInfo
         for item in items {
             let isSel = item.id == selected
             if let end = item.end {
-                let r = NSRect(x: l.x(item.start), y: 2, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 4)
+                let r = NSRect(x: l.x(item.start), y: 4, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 8)
                 (isSel ? NSColor.controlAccentColor : NSColor.systemRed).withAlphaComponent(isSel ? 0.9 : 0.7).setFill()
                 NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2).fill()
                 if isSel {   // grab handles
@@ -112,22 +116,26 @@ final class TransportViewController: ModelViewController {
             self.model.endScrub(at: self.slider.doubleValue)
         }
 
-        let seek = NSStackView(views: [slider, ticks])
-        seek.orientation = .vertical
-        seek.alignment = .width
-        seek.spacing = 0
-        seek.setHuggingPriority(.defaultLow, for: .horizontal)
+        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [playButton, positionLabel, seek, durationLabel])
+        // The strip is not part of the row, so the play button and labels stay centred on the slider; its edges are
+        // pinned to the slider's, so times map to the same x as the thumb.
+        let row = NSStackView(views: [playButton, positionLabel, slider, durationLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(row)
+        ticks.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(ticks)
         NSLayoutConstraint.activate([
+            ticks.leadingAnchor.constraint(equalTo: slider.leadingAnchor),
+            ticks.trailingAnchor.constraint(equalTo: slider.trailingAnchor),
+            ticks.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
+            ticks.heightAnchor.constraint(equalToConstant: TimelineMarkersView.height),
+            row.topAnchor.constraint(equalTo: ticks.bottomAnchor, constant: 4),
             row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            row.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
             row.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -4),
         ])
     }
