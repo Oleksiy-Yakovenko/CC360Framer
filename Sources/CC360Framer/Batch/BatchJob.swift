@@ -99,7 +99,7 @@ enum BatchJob {
     private static func overlayBundle(url: URL, project: ProjectSidecar, telemetry: Telemetry?, settings: ExportSettings) async -> OverlayBundle {
         var place: PlaceInfo?
         if let fix = telemetry?.gps {
-            place = await PlaceInfo.resolve(fix: fix, cacheFor: url)
+            place = await PlaceInfo.resolveBounded(fix: fix, cacheFor: url)
         }
         let placement = project.locationPlacement
             ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft

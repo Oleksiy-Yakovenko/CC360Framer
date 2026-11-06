@@ -456,13 +456,25 @@ final class PlayerModel: ObservableObject {
         rebuildOverlays()
         guard let fix = telemetry?.gps else { placeTask = nil; return }
         placeTask = Task { [weak self] in
-            let info = await PlaceInfo.resolve(fix: fix, cacheFor: url)
+            // A legacy cache is shown at once; the geocoder result replaces it when it arrives.
+            let info = await PlaceInfo.resolve(fix: fix, cacheFor: url, provisional: { [weak self] p in
+                guard let self, !Task.isCancelled else { return }
+                self.place = p
+                self.rebuildOverlays()
+            })
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.place = info
             self.rebuildOverlays()
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines(self.cardOptions.fields).joined(separator: " | "))"); fflush(stdout) }
         }
+    }
+
+    /// Waits for the running place lookup, at most `timeout` seconds (offline geocoding must not stall an export; the
+    /// cached or provisional card is then used).
+    func waitForPlace(timeout: Double = 5) async {
+        guard let task = placeTask else { return }
+        await PlaceInfo.withTimeout(timeout, fallback: ()) { await task.value }
     }
 
     func cleanup() {
@@ -717,7 +729,7 @@ extension PlayerModel {
     /// Headless end-to-end run for testing: analyse, then export (CC360_BATCH=out.mp4).
     func runBatch(_ out: URL) async {
         let started = Date()
-        await placeTask?.value
+        await waitForPlace()
         if ProcessInfo.processInfo.environment["CC360_STYLE"] == "scenery" { style = .scenery }
         if ProcessInfo.processInfo.environment["CC360_NO_ANALYSIS"] != nil {
             keyframes = []; autoFollow = false   // plain stabilised export of the default view
@@ -770,11 +782,10 @@ extension PlayerModel {
         let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
         let global = globalFov
         let box = UncheckedBox((comp, vc, mix, stabilizer))
-        let pending = placeTask
-        let map = timeMap(crossfade: settings.crossfade)
+                let map = timeMap(crossfade: settings.crossfade)
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                await pending?.value   // make sure the location lookup has finished
+                await self?.waitForPlace()   // the freshest place, but never longer than a few seconds
                 let overlays = await MainActor.run { self?.exportOverlays(settings: settings) ?? .empty }
                 try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
                                  audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map, to: url,

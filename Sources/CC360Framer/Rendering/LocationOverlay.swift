@@ -67,23 +67,50 @@ struct PlaceInfo: Codable, Equatable {
         return info
     }
 
-    /// Reverse geocodes; coordinates only when the lookup fails. Failures are not cached.
-    static func lookup(fix: Telemetry.GPSFix, cacheFor url: URL) async -> PlaceInfo {
-        guard let info = await geocode(fix: fix) else { return PlaceInfo(latitude: fix.latitude, longitude: fix.longitude, altitude: fix.altitude) }
-        info.save(for: url)
-        return info
+    /// Like `resolve`, but gives up waiting after `timeout` seconds and uses what the cache has (bare coordinates without one).
+    /// For the export, which must not hang while the geocoder is slow or offline.
+    static func resolveBounded(fix: Telemetry.GPSFix, cacheFor url: URL, timeout: Double = 5) async -> PlaceInfo {
+        let fallback = cached(for: url, matching: fix)?.withAltitude(of: fix) ?? PlaceInfo(latitude: fix.latitude, longitude: fix.longitude, altitude: fix.altitude)
+        return await withTimeout(timeout, fallback: fallback) { await resolve(fix: fix, cacheFor: url) }
     }
 
-    /// Cache, else lookup. A legacy cache is looked up again once; if that fails it keeps being used as it is.
-    static func resolve(fix: Telemetry.GPSFix, cacheFor url: URL) async -> PlaceInfo {
-        guard let cached = cached(for: url, matching: fix) else { return await lookup(fix: fix, cacheFor: url) }
-        if cached.isStale {
-            if let fresh = await geocode(fix: fix) { fresh.save(for: url); return fresh }
-            return cached.withAltitude(of: fix)
+    /// Result of `work`, or `fallback` when it takes longer than `seconds` (the work is cancelled, not awaited).
+    static func withTimeout<T: Sendable>(_ seconds: Double, fallback: T, _ work: @escaping @Sendable () async -> T) async -> T {
+        await withTaskGroup(of: T?.self) { g in
+            g.addTask { await work() }
+            g.addTask { try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1e9)); return nil }
+            let first = await g.next() ?? nil
+            g.cancelAll()
+            return first ?? fallback
         }
-        let info = cached.withAltitude(of: fix)
-        if info != cached { info.save(for: url) }   // refresh caches written before altitude existed
-        return info
+    }
+
+    /// Cache, else lookup. A legacy cache is shown at once (`provisional`) and looked up again; if that fails it keeps being used
+    /// as it is. Reads and writes the sidecar next to `url`.
+    @MainActor static func resolve(fix: Telemetry.GPSFix, cacheFor url: URL, provisional: (@MainActor (PlaceInfo) -> Void)? = nil) async -> PlaceInfo {
+        let r = await resolve(fix: fix, cached: cached(for: url, matching: fix), geocoder: { await geocode(fix: $0) }, provisional: provisional)
+        if r.save { r.info.save(for: url) }
+        return r.info
+    }
+
+    /// Pure decision core of `resolve`. Fresh cache: used as is (saved again only when the altitude changed). Legacy cache
+    /// (`isStale`): `provisional` gets it immediately (so the card is not delayed by a slow or offline geocoder), then the
+    /// geocoder result replaces it; a failed lookup keeps the legacy one and saves nothing. No cache: geocoder, else bare coordinates
+    /// (not saved).
+    @MainActor static func resolve(fix: Telemetry.GPSFix, cached: PlaceInfo?, geocoder: (Telemetry.GPSFix) async -> PlaceInfo?,
+                        provisional: (@MainActor (PlaceInfo) -> Void)? = nil) async -> (info: PlaceInfo, save: Bool) {
+        let bare = PlaceInfo(latitude: fix.latitude, longitude: fix.longitude, altitude: fix.altitude)
+        guard let cached else {
+            if let g = await geocoder(fix) { return (g, true) }
+            return (bare, false)
+        }
+        let current = cached.withAltitude(of: fix)
+        if cached.isStale {
+            if let provisional { await provisional(current) }
+            if let g = await geocoder(fix) { return (g, true) }
+            return (current, false)
+        }
+        return (current, current != cached)   // refresh caches written before altitude existed
     }
 
     func save(for url: URL) {

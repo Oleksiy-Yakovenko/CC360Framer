@@ -273,4 +273,48 @@ final class OverlayPlanTests: XCTestCase {
         XCTAssertGreaterThan(h128, h64 * 1.5)
         XCTAssertEqual(height(64, short: 540), height(64) / 2, accuracy: 3)
     }
+
+    // MARK: place resolution
+
+    @MainActor
+    func testResolveStaleCacheShownBeforeGeocoderAnswers() async throws {
+        let fix = Telemetry.GPSFix(latitude: 1, longitude: 2, altitude: 9)
+        let stale = try JSONDecoder().decode(PlaceInfo.self, from: Data(#"{"latitude":1,"longitude":2,"country":"DK","place":"Nyhavn, Town"}"#.utf8))
+        let fresh = PlaceInfo(latitude: 1, longitude: 2, country: "DK", city: "Town")
+        var events: [String] = []
+        let r = await PlaceInfo.resolve(fix: fix, cached: stale, geocoder: { _ in events.append("geocode"); return fresh },
+                                        provisional: { p in events.append("provisional:\(p.place ?? "-"):\(p.altitude ?? -1)") })
+        XCTAssertEqual(events, ["provisional:Nyhavn, Town:9.0", "geocode"])   // shown first, with the fix's altitude
+        XCTAssertEqual(r.info, fresh)
+        XCTAssertTrue(r.save)
+        // Failed refresh keeps the legacy cache and saves nothing.
+        let failed = await PlaceInfo.resolve(fix: fix, cached: stale, geocoder: { _ in nil })
+        XCTAssertEqual(failed.info, stale.withAltitude(of: fix))
+        XCTAssertFalse(failed.save)
+    }
+
+    @MainActor func testResolveFreshAndMissingCache() async {
+        let fix = Telemetry.GPSFix(latitude: 1, longitude: 2, altitude: 9)
+        let fresh = PlaceInfo(latitude: 1, longitude: 2, country: "DK", altitude: 9, city: "Town")
+        var called = false
+        let a = await PlaceInfo.resolve(fix: fix, cached: fresh, geocoder: { _ in called = true; return nil })
+        XCTAssertFalse(called)
+        XCTAssertEqual(a.info, fresh)
+        XCTAssertFalse(a.save)
+        var noAlt = fresh; noAlt.altitude = nil
+        let b = await PlaceInfo.resolve(fix: fix, cached: noAlt, geocoder: { _ in nil })
+        XCTAssertTrue(b.save)   // altitude refreshed
+        let c = await PlaceInfo.resolve(fix: fix, cached: nil, geocoder: { _ in nil })
+        XCTAssertEqual(c.info, PlaceInfo(latitude: 1, longitude: 2, altitude: 9))
+        XCTAssertFalse(c.save)
+        let d = await PlaceInfo.resolve(fix: fix, cached: nil, geocoder: { _ in fresh })
+        XCTAssertTrue(d.save)
+    }
+
+    func testWithTimeoutFallsBack() async {
+        let slow = await PlaceInfo.withTimeout(0.05, fallback: "fallback") { try? await Task.sleep(nanoseconds: 5_000_000_000); return "late" }
+        XCTAssertEqual(slow, "fallback")
+        let quick = await PlaceInfo.withTimeout(2, fallback: "fallback") { "done" }
+        XCTAssertEqual(quick, "done")
+    }
 }
