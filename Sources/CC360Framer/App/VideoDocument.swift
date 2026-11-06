@@ -15,11 +15,11 @@ final class VideoDocument: NSDocument {
     nonisolated override class var readableTypes: [String] { [typeName] }
     nonisolated override class var writableTypes: [String] { [] }
 
-    /// Edit > Undo/Redo of the window use the model's manager. NSDocument's own change counting stays unused: the sidecars
-    /// persist the edits, so the document never becomes dirty.
-    override var undoManager: UndoManager? {
-        get { model.undoManager }
-        set {}
+    /// The model registers its undo steps on this document's own (default NSDocument) undo manager, so the window, the
+    /// Edit menu and text views share it. NSDocument's change counting stays unused: the sidecars persist the edits.
+    override init() {
+        super.init()
+        model.undoManagerProvider = { [weak self] in self?.undoManager }
     }
 
     /// Nothing is read here: the media is loaded asynchronously by the model once the window exists. Only an unreadable

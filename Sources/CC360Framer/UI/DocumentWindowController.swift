@@ -75,9 +75,6 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         window.saveFrame(usingName: DocumentKeys.frameName(for: url))
     }
 
-    /// Edit > Undo/Redo and the text fields' field editor all use the model's undo manager.
-    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
-
     func windowWillClose(_ notification: Notification) {
         saveState()
         // Releases the name, so the same file can use it again when it is reopened before this window is deallocated.

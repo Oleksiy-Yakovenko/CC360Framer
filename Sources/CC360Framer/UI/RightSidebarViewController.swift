@@ -306,8 +306,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private var cardPlacementPopup = NSPopUpButton()
     private var cardOverrideCheck = NSButton()
     private let capStartField = NSTextField(), capEndField = NSTextField()
-    private let capTextView = NSTextView()
-    private var capScroll = NSScrollView()
+    /// Built by AppKit so the text container tracks the width (a bare `NSTextView()` has a zero-width container: nothing can be typed).
+    private let capScroll = NSTextView.scrollableTextView()
+    private var capTextView: NSTextView { capScroll.documentView as! NSTextView }
     private var ovPlacement = NSPopUpButton(), ovFont = NSPopUpButton()
     private let ovSize = NSTextField(), ovStrokeWidth = NSTextField()
     private var ovFill = NSColorWell(), ovStroke = NSColorWell()
@@ -361,11 +362,11 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         capTextView.isAutomaticDashSubstitutionEnabled = false
         capTextView.font = .systemFont(ofSize: NSFont.systemFontSize)
         capTextView.textContainerInset = NSSize(width: 2, height: 4)
-        capTextView.isVerticallyResizable = true
-        capTextView.autoresizingMask = [.width]
+        capTextView.isEditable = true
+        capTextView.isSelectable = true
+        capTextView.drawsBackground = true
         capTextView.delegate = self
         capTextView.toolTip = "Caption text; Return starts a new line"
-        capScroll.documentView = capTextView
         capScroll.hasVerticalScroller = true
         capScroll.borderType = .bezelBorder
         capScroll.heightAnchor.constraint(equalToConstant: 80).isActive = true

@@ -102,7 +102,7 @@ final class PlayerModel: ObservableObject {
     @Published var previewWithCuts = false { didSet { if previewWithCuts != oldValue { cutsChanged() } } }
     struct CutSnapshot: Equatable { var cuts: [CutRegion]; var selected: UUID? }
     private(set) lazy var cutUndo = SnapshotUndo<CutSnapshot>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in CutSnapshot(cuts: cuts, selected: selectedCut) },
         restore: { [unowned self] s in
             cuts = s.cuts
@@ -114,6 +114,7 @@ final class PlayerModel: ObservableObject {
     /// Keyframes and selection as one undoable unit.
     struct KeySnapshot: Equatable { var keys: [Keyframe]; var selected: UUID? }
     private(set) lazy var undo = SnapshotUndo<KeySnapshot>(
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in KeySnapshot(keys: keyframes, selected: selectedKey) },
         restore: { [unowned self] s in
             keyframes = s.keys
@@ -121,8 +122,11 @@ final class PlayerModel: ObservableObject {
             keysEdited = true
             saveKeyframes()
         })
-    /// Exposed to the window (see `AppDelegate.windowWillReturnUndoManager`) so Edit > Undo/Redo work.
-    var undoManager: UndoManager { undo.manager }
+    /// Where undo steps go. `VideoDocument` sets this to its own (NSDocument-created) manager, which the window, the Edit
+    /// menu and text views then share; nil (the default, e.g. headless and batch runs, tests) uses `fallbackUndoManager`.
+    var undoManagerProvider: () -> UndoManager? = { nil }
+    private lazy var fallbackUndoManager = UndoManager()
+    var undoManager: UndoManager { undoManagerProvider() ?? fallbackUndoManager }
     @Published var autoFollow = false
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
@@ -177,7 +181,7 @@ final class PlayerModel: ObservableObject {
     @Published var autoLocationCard = true { didSet { if autoLocationCard != oldValue { cardsChanged() } } }
     struct CardKeySnapshot: Equatable { var keys: [LocationCardKey]; var selected: UUID?; var auto: Bool }
     private(set) lazy var cardKeyUndo = SnapshotUndo<CardKeySnapshot>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in CardKeySnapshot(keys: cardKeys, selected: selectedCardKey, auto: autoLocationCard) },
         restore: { [unowned self] s in
             cardKeys = s.keys
@@ -191,7 +195,7 @@ final class PlayerModel: ObservableObject {
     @Published var selectedCaption: UUID?
     struct CaptionSnapshot: Equatable { var captions: [Caption]; var selected: UUID? }
     private(set) lazy var captionUndo = SnapshotUndo<CaptionSnapshot>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in CaptionSnapshot(captions: captions, selected: selectedCaption) },
         restore: { [unowned self] s in
             captions = s.captions
@@ -202,7 +206,7 @@ final class PlayerModel: ObservableObject {
     /// Global caption look: app default in UserDefaults, per file in the project sidecar.
     @Published var captionStyle = CaptionStyle.loadDefaults()
     private(set) lazy var captionStyleUndo = SnapshotUndo<CaptionStyle>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in captionStyle },
         restore: { [unowned self] s in applyCaptionStyle(s) })
     var lastCaptionStyleEdit: (name: String, at: Date)?
@@ -214,7 +218,7 @@ final class PlayerModel: ObservableObject {
     var loadingProjectFlag: Bool { loadingProject }
     private var lastCardEdit: (name: String, at: Date)?
     private(set) lazy var cardUndo = SnapshotUndo<LocationCardStyle>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in cardStyle },
         restore: { [unowned self] s in
             cardStyle = s
@@ -240,7 +244,7 @@ final class PlayerModel: ObservableObject {
     struct CardOptions: Equatable { var show = true; var fields = LocationCardFields() }
     @Published private(set) var cardOptions = CardOptions()
     private(set) lazy var cardOptionsUndo = SnapshotUndo<CardOptions>(
-        manager: undo.manager,
+        manager: { [unowned self] in undoManager },
         capture: { [unowned self] in cardOptions },
         restore: { [unowned self] s in
             cardOptions = s

@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Unmodified Space / K / Delete must reach a text field being edited instead.
-        let typing = NSApp.keyWindow?.firstResponder is NSText
+        let typing = NSApp.keyWindow?.firstResponder.map(TextEditing.isEditing) ?? false
         let model = current?.model
         switch item.action {
         case #selector(deleteKey): return !typing && model?.timeline.canDelete == true
@@ -187,4 +187,9 @@ enum CC360FramerApp {
             app.run()
         }
     }
+}
+
+/// Whether a first responder is a text editor (field editor or text view) that must receive unmodified keys before menu shortcuts.
+enum TextEditing {
+    static func isEditing(_ responder: NSResponder) -> Bool { responder is NSText }
 }
