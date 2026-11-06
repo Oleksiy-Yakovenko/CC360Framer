@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
     let model = PlayerModel()
     private var window: NSWindow!
     private var main: MainViewController!
@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentViewController = main
+        window.delegate = self
         window.setContentSize(NSSize(width: 1280, height: 800))
         window.contentMinSize = NSSize(width: 900, height: 520)
         window.title = "CC360Framer"
@@ -33,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Task { await model.open(URL(fileURLWithPath: path)) }
         }
     }
+
+    /// Edit > Undo/Redo and the text fields' field editor all use the model's undo manager.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { model.cleanup() }
@@ -64,13 +68,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func toggleInspector(_ sender: Any?) { main.toggleInspector() }
     @objc func togglePlay(_ sender: Any?) { model.togglePlay() }
     @objc func setKey(_ sender: Any?) { model.setKey() }
-    @objc func deleteKey(_ sender: Any?) { model.deleteSelectedKey() }
+    @objc func deleteKey(_ sender: Any?) { main.center.keyframes.confirmDeleteKey() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        // Unmodified Space / K / Delete must reach a text field being edited instead.
+        let typing = NSApp.keyWindow?.firstResponder is NSText
         switch item.action {
+        case #selector(deleteKey): return !typing && model.selectedKey != nil
+        case #selector(togglePlay), #selector(setKey): return !typing && model.duration > 0
         case #selector(exportDocument): return model.duration > 0 || model.exportProgress != nil
-        case #selector(deleteKey): return model.selectedKey != nil
-        case #selector(togglePlay), #selector(setKey): return model.duration > 0
         default: return true
         }
     }
@@ -103,6 +109,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(file, "Export…", #selector(exportDocument), "e", target: self)
         file.addItem(.separator())
         add(file, "Close", #selector(NSWindow.performClose(_:)), "w")
+
+        let edit = submenu("Edit")
+        add(edit, "Undo", Selector(("undo:")), "z")
+        add(edit, "Redo", Selector(("redo:")), "z", [.command, .shift])
+        edit.addItem(.separator())
+        add(edit, "Cut", #selector(NSText.cut(_:)), "x")
+        add(edit, "Copy", #selector(NSText.copy(_:)), "c")
+        add(edit, "Paste", #selector(NSText.paste(_:)), "v")
+        add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
 
         let view = submenu("View")
         add(view, "Toggle Left Sidebar", #selector(toggleSidebar), "s", [.command, .control], target: self)

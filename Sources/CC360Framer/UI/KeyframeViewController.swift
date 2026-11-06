@@ -53,8 +53,28 @@ final class KeyframeViewController: ModelViewController {
     }
 
     @objc private func setKey() { model.setKey() }
-    @objc private func deleteKey() { model.deleteSelectedKey() }
-    @objc private func clearKeys() { model.clearKeys() }
+    @objc private func deleteKey() { confirmDeleteKey() }
+    @objc private func clearKeys() {
+        confirm("Clear all keyframes?", "This removes every keyframe. You can undo it with Edit > Undo.", button: "Clear keys") { [model] in model.clearKeys() }
+    }
+
+    /// Asks before deleting the selected keyframe (also used by the Delete menu item).
+    func confirmDeleteKey() {
+        guard model.selectedKey != nil else { return }
+        confirm("Delete the selected keyframe?", "You can undo it with Edit > Undo.", button: "Delete key") { [model] in model.deleteSelectedKey() }
+    }
+
+    private func confirm(_ message: String, _ info: String, button: String, _ action: @escaping () -> Void) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.informativeText = info
+        let destructive = alert.addButton(withTitle: button)
+        destructive.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { if $0 == .alertFirstButtonReturn { action() } }
+    }
     @objc private func previous() { jump(forward: false) }
     @objc private func next() { jump(forward: true) }
 

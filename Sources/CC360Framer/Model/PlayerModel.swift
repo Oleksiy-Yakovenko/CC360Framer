@@ -47,6 +47,18 @@ final class PlayerModel: ObservableObject {
     @Published var errorText: String?
     @Published var keyframes: [Keyframe] = [] { didSet { path = CameraPath(keys: keyframes) } }
     @Published var selectedKey: UUID?
+    /// Keyframes and selection as one undoable unit.
+    struct KeySnapshot: Equatable { var keys: [Keyframe]; var selected: UUID? }
+    private(set) lazy var undo = SnapshotUndo<KeySnapshot>(
+        capture: { [unowned self] in KeySnapshot(keys: keyframes, selected: selectedKey) },
+        restore: { [unowned self] s in
+            keyframes = s.keys
+            selectedKey = s.selected
+            keysEdited = true
+            saveKeyframes()
+        })
+    /// Exposed to the window (see `AppDelegate.windowWillReturnUndoManager`) so Edit > Undo/Redo work.
+    var undoManager: UndoManager { undo.manager }
     @Published var autoFollow = false
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
@@ -63,9 +75,25 @@ final class PlayerModel: ObservableObject {
     @Published var overlayPlacement: OverlayPlacement = OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft {
         didSet {
             UserDefaults.standard.set(overlayPlacement.rawValue, forKey: "overlayPlacement")
+            if overlayPlacement != oldValue, !restoringPlacement {
+                let old = oldValue
+                registerPlacementUndo(old)
+            }
             viewState.overlayPlacement = overlayPlacement
             if let place { setOverlay(LocationOverlay.image(for: place, placement: overlayPlacement)) }
         }
+    }
+    private var restoringPlacement = false
+
+    private func registerPlacementUndo(_ old: OverlayPlacement) {
+        undoManager.registerUndo(withTarget: self) { m in
+            let current = m.overlayPlacement
+            m.restoringPlacement = true
+            m.overlayPlacement = old
+            m.restoringPlacement = false
+            m.registerPlacementUndo(current)
+        }
+        undoManager.setActionName("Change Location Card Placement")
     }
     private var place: PlaceInfo?
     private var placeTask: Task<Void, Never>?
@@ -160,6 +188,7 @@ final class PlayerModel: ObservableObject {
             loadPlace(for: url)
             rebuildStabilizer()
             keyframes = loadKeyframes(for: url)
+            undoManager.removeAllActions()
             observations = loadObservations(for: url)
             keysEdited = !keyframes.isEmpty
             selectedKey = nil
@@ -338,6 +367,10 @@ extension PlayerModel {
     /// Adds (or replaces) a keyframe at the playhead using the current view.
     func setKey() {
         guard item != nil else { return }
+        undo.perform("Set Key") { setKeyUndoable() }
+    }
+
+    private func setKeyUndoable() {
         let k = Keyframe(time: position, yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
         var keys = keyframes
         if let i = keys.firstIndex(where: { abs($0.time - position) < 0.15 }) {
@@ -362,17 +395,21 @@ extension PlayerModel {
 
     func deleteSelectedKey() {
         guard let id = selectedKey else { return }
-        keyframes.removeAll { $0.id == id }
-        selectedKey = nil
-        keysEdited = true
-        saveKeyframes()
+        undo.perform("Delete Key") {
+            keyframes.removeAll { $0.id == id }
+            selectedKey = nil
+            keysEdited = true
+            saveKeyframes()
+        }
     }
 
     func clearKeys() {
-        keyframes = []
-        selectedKey = nil
-        autoFollow = false
-        saveKeyframes()
+        undo.perform("Clear Keys") {
+            keyframes = []
+            selectedKey = nil
+            autoFollow = false
+            saveKeyframes()
+        }
     }
 
     func analyze() {
@@ -437,11 +474,13 @@ extension PlayerModel {
     func buildPath() {
         let keys = style.keyframes(from: virtualObservations(), duration: duration, fov: 70)
         guard !keys.isEmpty else { statusText = "Nothing found to build a path from."; return }
-        keyframes = keys
-        selectedKey = nil
-        keysEdited = false
-        autoFollow = true
-        saveKeyframes()
+        undo.perform("Build Path") {
+            keyframes = keys
+            selectedKey = nil
+            keysEdited = false
+            autoFollow = true
+            saveKeyframes()
+        }
         statusText = "\(style.rawValue): \(keys.count) keyframes."
     }
 
