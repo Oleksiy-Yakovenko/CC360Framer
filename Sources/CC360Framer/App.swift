@@ -51,6 +51,7 @@ struct ContentView: View {
     }
 
     @State private var preset = Exporter.Preset.all[0]
+    @State private var confirmReanalyse = false
 
     var controls: some View {
         VStack(spacing: 6) {
@@ -87,7 +88,13 @@ struct ContentView: View {
                     Button("Analyse") { model.analyze() }.help("Detect people and objects, then build a camera path")
                 } else {
                     Button("Build path") { model.buildPath() }.help("Regenerate the path in this style (replaces keyframes)")
-                    Button("Re-analyse") { model.analyze() }
+                    Button("Re-analyse") { confirmReanalyse = true }
+                        .confirmationDialog("Re-run the analysis?", isPresented: $confirmReanalyse) {
+                            Button("Re-analyse", role: .destructive) { model.analyze() }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("This takes several minutes and replaces the current detections and keyframes.")
+                        }
                 }
                 Button("Set key") { model.setKey() }.keyboardShortcut("k", modifiers: [])
                     .help("Keyframe the current view at the playhead (K)")

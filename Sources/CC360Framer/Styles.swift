@@ -42,8 +42,14 @@ func continuityWeight(_ c: Candidate, _ prev: (yaw: Float, pitch: Float)?) -> Fl
 /// fixed to the bike), and the rider is found as the typical person direction.
 enum SceneryPlanner {
     private enum Kind { case forward, side, rider }
-    /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot, rider every cycle.
-    private static let cycle: [(Kind, Double)] = [(.forward, 6), (.side, 3.5), (.forward, 6), (.side, 3.5), (.forward, 5), (.rider, 3)]
+    /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot.
+    private static let cycle: [(Kind, Double)] = [(.forward, 6), (.side, 3.5), (.forward, 6), (.side, 3.5), (.forward, 5)]
+    /// The rider only appears when a side slot has nothing interesting, at most this often and this many times.
+    private static let riderGap = 60.0
+    private static let riderMax = 2
+    private static let riderShotLength = 3.0
+    /// Salient things this close to the rider are the rider's own bike and gear, not scenery.
+    private static let riderExclusion: Float = 50 * .pi / 180
     private static let dt = 0.2
     private static let forwardFov: Float = 70
     private static let closeFov: Float = 55
@@ -57,17 +63,24 @@ enum SceneryPlanner {
 
         var samples: [Sample] = []
         var i = 0, shot = 0, lastSide: Float = 0
+        var lastRiderT = 0.0, riderCount = 0
         while i < total {
             let (planned, nominal) = cycle[shot % cycle.count]
             // Vary lengths a little so the rhythm does not feel mechanical.
             let length = max(Int((nominal * (1 + 0.15 * sin(Double(shot) * 1.7)) / dt).rounded()), 1)
-            let end = min(i + length, total)
+            var end = min(i + length, total)
             var made: [Sample] = []
             switch planned {
             case .side:
-                if let r = sideShot(byIndex, i..<end, lastSide: lastSide) { made = r.samples; lastSide = r.side }
+                if let r = sideShot(byIndex, i..<end, lastSide: lastSide, rider: rider) {
+                    made = r.samples; lastSide = r.side
+                } else if let rider, riderCount < riderMax, Double(i) * dt - lastRiderT >= riderGap {
+                    let rEnd = min(i + Int(riderShotLength / dt), total)
+                    made = riderShot(byIndex, i..<rEnd, ref: rider)
+                    end = rEnd; lastRiderT = Double(i) * dt; riderCount += 1
+                }
             case .rider:
-                if let rider { made = riderShot(byIndex, i..<end, ref: rider) }
+                break
             case .forward:
                 break
             }
@@ -92,9 +105,12 @@ enum SceneryPlanner {
     }
 
     /// Picks the side with the more interesting objects (alternating when similar) and follows one object.
-    private static func sideShot(_ obs: [Int: Observation], _ r: Range<Int>, lastSide: Float) -> (samples: [Sample], side: Float)? {
+    private static func sideShot(_ obs: [Int: Observation], _ r: Range<Int>, lastSide: Float, rider: (yaw: Float, pitch: Float)?) -> (samples: [Sample], side: Float)? {
         func candidates(_ i: Int, _ side: Float) -> [Candidate] {
-            obs[i]?.salient.filter { $0.yaw.sign == (side > 0 ? .plus : .minus) && sideRange.contains(abs($0.yaw)) } ?? []
+            obs[i]?.salient.filter { c in
+                c.yaw.sign == (side > 0 ? .plus : .minus) && sideRange.contains(abs(c.yaw))
+                    && !(rider.map { abs(wrapAngle(c.yaw - $0.yaw)) < riderExclusion } ?? false)
+            } ?? []
         }
         func strength(_ side: Float) -> Float {
             r.reduce(0) { $0 + (candidates($1, side).map(\.score).max() ?? 0) } * (side == lastSide ? 0.6 : 1)

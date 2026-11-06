@@ -51,7 +51,9 @@ final class PlayerModel: ObservableObject {
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
     @Published var statusText: String?
-    @Published var style: PathStyle = .follow
+    @Published var style: PathStyle = PathStyle(rawValue: UserDefaults.standard.string(forKey: "pathStyle") ?? "") ?? .follow {
+        didSet { UserDefaults.standard.set(style.rawValue, forKey: "pathStyle") }
+    }
     @Published var stabilization: StabilizeMode = .smooth
     private var telemetry: Telemetry?
     private(set) var stabilizer: Stabilizer?
@@ -434,7 +436,7 @@ extension PlayerModel {
             let keys = st.keyframes(from: virtualObservations(), duration: duration, fov: 70)
             print("style \(st.rawValue): \(keys.count) keyframes")
         }
-        for k in keyframes.prefix(40) {
+        for k in keyframes.prefix(400) {
             print(String(format: "  t=%5.1f yaw=%5.0f° pitch=%4.0f° fov=%3.0f", k.time, Double(k.yaw) * 180 / .pi, Double(k.pitch) * 180 / .pi, k.fov))
         }
         let exportStart = Date()
