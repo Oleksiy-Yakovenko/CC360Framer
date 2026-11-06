@@ -117,6 +117,8 @@ final class SceneryRelativeSideTests: XCTestCase {
         // Forward is 35 deg for the first minute (object at d = 90: glance), then 125 deg (d = 0: none).
         let s = SceneryPlanner.plan(obs(salient: [y]), duration: 120, forwardYaw: { $0 < 60 ? 35 * .pi / 180 : 125 * .pi / 180 })
         XCTAssertTrue(s.contains { $0.t < 60 && $0.fov == 55 && abs($0.yaw - y) < 1e-3 })
-        XCTAssertFalse(s.contains { $0.t >= 62 && $0.fov == 55 })
+        // A side shot (up to ~4 s) that started before 60 s may still run past it: check from 66 s on. Rider shots (the test
+        // observations contain a person behind the camera) also use fov 55, so look for a glance AT the object.
+        XCTAssertFalse(s.contains { $0.t >= 66 && $0.fov == 55 && abs($0.yaw - y) < 1e-3 })
     }
 }
