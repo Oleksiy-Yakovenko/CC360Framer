@@ -62,13 +62,14 @@ final class ExportTabViewController: ModelViewController {
     private var cutsCheck = NSButton()
     private var fovCheck = NSButton()
     private let fovSlider = NSSlider(value: 70, minValue: 20, maxValue: 140, target: nil, action: nil)
-    private let fovValue = NSTextField(labelWithString: "70°")
+    private var fovRow: SliderField!
     private var capPlacement = NSPopUpButton()
     private var capFont = NSPopUpButton()
     private var capSize = NSComboBox()
     private var capFill = NSColorWell()
     private var capStroke = NSColorWell()
     private let capStrokeWidth = NSSlider(value: 7, minValue: 0, maxValue: 20, target: nil, action: nil)
+    private var capStrokeRow: SliderField!
     private var capReset = NSButton()
 
     override func loadView() {
@@ -85,14 +86,9 @@ final class ExportTabViewController: ModelViewController {
         progressBar.isHidden = true
         fovCheck = NSButton(checkboxWithTitle: "Global FOV", target: self, action: #selector(fovChanged))
         fovCheck.toolTip = "Use one vertical field of view everywhere: it overrides the fov of all keyframes in the preview, the export and batch runs. While on, scroll and pinch zoom in the preview are disabled; use the slider."
-        fovSlider.target = self; fovSlider.action = #selector(fovChanged)
         fovSlider.toolTip = "Vertical field of view in degrees, 20 to 140"
-        fovValue.alignment = .right
-        fovValue.setContentHuggingPriority(.required, for: .horizontal)
-        let fovRow = NSStackView(views: [fovSlider, fovValue])
-        fovRow.spacing = 6
-        fovRow.distribution = .fill
-        fovSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        fovRow = Kit.sliderRow(fovSlider, decimals: 0, step: 1, target: self, action: #selector(fovChanged))
+        fovRow.toolTip = fovSlider.toolTip
         settingsView.identifier = Kit.fullWidthID
         capPlacement = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Default placement of captions; a caption can override it in the Inspector tab",
                                  target: self, action: #selector(captionStyleChanged))
@@ -102,8 +98,9 @@ final class ExportTabViewController: ModelViewController {
                                 target: self, action: #selector(captionStyleChanged))
         capFill = Kit.colorWell(.white, tip: "Default caption text colour", target: self, action: #selector(captionStyleChanged))
         capStroke = Kit.colorWell(.black, tip: "Default caption outline colour", target: self, action: #selector(captionStyleChanged))
-        capStrokeWidth.target = self; capStrokeWidth.action = #selector(captionStyleChanged)
         capStrokeWidth.toolTip = "Outline width as a percentage of the font size (0 = none)"
+        capStrokeRow = Kit.sliderRow(capStrokeWidth, decimals: 0, step: 1, target: self, action: #selector(captionStyleChanged))
+        capStrokeRow.toolTip = capStrokeWidth.toolTip
         capReset = Kit.button("Reset captions look", tip: "Back to bottom centre, white text with a black outline", target: self, action: #selector(captionStyleReset))
         Kit.sidebarStack(in: view, [
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
@@ -121,7 +118,7 @@ final class ExportTabViewController: ModelViewController {
                 Kit.row("Size", capSize, tip: "Font size, % of the frame's short side", fill: false),
                 Kit.row("Colour", capFill, tip: "Text colour", fill: false),
                 Kit.row("Outline", capStroke, tip: "Outline colour", fill: false),
-                Kit.row("Width", capStrokeWidth, tip: "Outline width, % of the font size"),
+                Kit.row("Width", capStrokeRow, tip: "Outline width, % of the font size"),
                 Kit.checkRow(capReset),
             ]),
             progressBar,
@@ -133,14 +130,13 @@ final class ExportTabViewController: ModelViewController {
         frameCheck.state = model.showExportFrame ? .on : .off
         cutsCheck.state = model.previewWithCuts ? .on : .off
         fovCheck.state = model.globalFov.enabled ? .on : .off
-        fovSlider.isEnabled = model.globalFov.enabled
-        fovSlider.doubleValue = Double(model.globalFov.degrees)
-        fovValue.stringValue = "\(Int(model.globalFov.degrees.rounded()))°"
+        fovRow.isEnabled = model.globalFov.enabled
+        fovRow.setValue(Double(model.globalFov.degrees.rounded()))
         let cs = model.captionStyle
         capPlacement.selectItem(at: OverlayPlacement.allCases.firstIndex(of: cs.placement) ?? 0)
         capFont.selectItem(withTitle: cs.fontName ?? CaptionStyle.systemFontName)
         Kit.setSize(capSize, cs.size * 100)
-        capStrokeWidth.doubleValue = cs.strokeWidth
+        capStrokeRow.setValue(cs.strokeWidth)
         if capFill.color != cs.fill.nsColor { capFill.color = cs.fill.nsColor }
         if capStroke.color != cs.stroke.nsColor { capStroke.color = cs.stroke.nsColor }
         capReset.isEnabled = cs != CaptionStyle()
@@ -228,6 +224,7 @@ final class LocationTabViewController: ModelViewController {
     private var sizeCombo = NSComboBox()
     private var fillWell = NSColorWell()
     private var strokeWell = NSColorWell()
+    private var strokeRow: SliderField!
     private let strokeSlider = NSSlider(value: 0, minValue: 0, maxValue: 12, target: nil, action: nil)
     private var resetButton = NSButton()
     private var autoCheck = NSButton()
@@ -260,8 +257,9 @@ final class LocationTabViewController: ModelViewController {
         fontPopup.insertItem(withTitle: "System", at: 0)
         sizeCombo = Kit.sizeCombo(presets: LocationCardStyle.sizePresets, tip: "Size of the first line in points at a 1080 px short side (scales with the frame); the other lines scale with it. Pick a preset or type a number, 8 to 400.",
                                   target: self, action: #selector(styleChanged))
-        strokeSlider.target = self; strokeSlider.action = #selector(styleChanged)
         strokeSlider.toolTip = "Outline width in points (0 = none)"
+        strokeRow = Kit.sliderRow(strokeSlider, decimals: 1, step: 0.5, target: self, action: #selector(styleChanged))
+        strokeRow.toolTip = strokeSlider.toolTip
         fillWell = Kit.colorWell(.white, tip: "Text colour", target: self, action: #selector(styleChanged))
         strokeWell = Kit.colorWell(.black, tip: "Outline colour", target: self, action: #selector(styleChanged))
         resetButton = Kit.button("Reset look", tip: "Back to the default font, size and colours", target: self, action: #selector(reset))
@@ -275,7 +273,7 @@ final class LocationTabViewController: ModelViewController {
                 Kit.row("Size", sizeCombo, tip: "Size of the first line in points (1080 px short side)", fill: false),
                 Kit.row("Colour", fillWell, tip: "Text colour", fill: false),
                 Kit.row("Outline", strokeWell, tip: "Outline colour", fill: false),
-                Kit.row("Width", strokeSlider, tip: "Outline width in points"),
+                Kit.row("Width", strokeRow, tip: "Outline width in points"),
                 Kit.checkRow(resetButton),
             ]),
         ], topAnchor: view.topAnchor)
@@ -286,7 +284,7 @@ final class LocationTabViewController: ModelViewController {
         let s = model.cardStyle
         fontPopup.selectItem(withTitle: s.fontName ?? "System")
         Kit.setSize(sizeCombo, s.baseSize)
-        strokeSlider.doubleValue = s.strokeWidth
+        strokeRow.setValue(s.strokeWidth)
         if fillWell.color != s.fill.nsColor { fillWell.color = s.fill.nsColor }
         if strokeWell.color != s.stroke.nsColor { strokeWell.color = s.stroke.nsColor }
         resetButton.isEnabled = s != LocationCardStyle()

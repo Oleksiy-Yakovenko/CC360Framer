@@ -19,6 +19,11 @@ enum SizeInput {
         v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
 
+    /// `v` with exactly `decimals` fractional digits ("2.5", "0.70"); `decimals` 0 gives whole numbers. Used by the slider value fields.
+    static func format(_ v: Double, decimals: Int) -> String {
+        String(format: "%.\(max(decimals, 0))f", v)
+    }
+
     /// Which text of an editable combo box is the user's choice. A list pick (`pickedItem`, reported by the selection
     /// notification) wins; otherwise the text being edited (`editorText`) or the field value (`stringValue`). The selected
     /// item's index is deliberately ignored: it goes stale when the user types a value that is not a preset, and reading

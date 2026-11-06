@@ -12,6 +12,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
     private let widthField = NSTextField(), aspectW = NSTextField(), aspectH = NSTextField()
     private let crossfadeField = NSTextField()
     private let sizeLabel = NSTextField(labelWithString: "")
+    private var qualityField: SliderField!
     private var bitrateRow: GridRow!, qualityRow: GridRow!, widthRow: GridRow!, aspectRow: GridRow!
 
     override init(frame: NSRect) {
@@ -26,8 +27,9 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         ratePopup = Kit.popup(ExportSettings.RateControl.allCases.map(\.label), tip: "Fixed average bitrate, or a quality level that lets the size vary", target: self, action: #selector(changed))
         resolutionPopup = Kit.popup(ExportSettings.Resolution.allCases.map(\.label), tip: "Short side of the output (1080p = 1080 px), or a custom width", target: self, action: #selector(changed))
         aspectPopup = Kit.popup(ExportSettings.Aspect.allCases.map(\.label), tip: "Aspect ratio of the exported video. The vertical field of view stays the same, so a different ratio changes the horizontal extent", target: self, action: #selector(changed))
-        qualitySlider.target = self; qualitySlider.action = #selector(changed)
         qualitySlider.toolTip = "Encoder quality, 0.1 (small) to 1 (best)"
+        qualityField = Kit.sliderRow(qualitySlider, decimals: 2, step: 0.01, target: self, action: #selector(changed))
+        qualityField.toolTip = qualitySlider.toolTip
         bitrateField.placeholderString = "auto"
         bitrateField.toolTip = "Average video bitrate in Mbps; empty = automatic (20 Mbps, 50 Mbps above 3 MP)"
         widthField.toolTip = "Output width in pixels (16 to 8192)"
@@ -49,7 +51,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         aspectW.widthAnchor.constraint(equalTo: aspectH.widthAnchor).isActive = true
         aspectBox.views[1].setContentHuggingPriority(.required, for: .horizontal)
         bitrateRow = Kit.row("Bitrate", mbps, tip: "Average video bitrate")
-        qualityRow = Kit.row("Level", qualitySlider, tip: "Encoder quality")
+        qualityRow = Kit.row("Level", qualityField, tip: "Encoder quality")
         widthRow = Kit.row("Width", widthField, tip: "Output width in pixels")
         aspectRow = Kit.row("Ratio", aspectBox, tip: "Custom aspect ratio width : height")
         let rows: [GridRow] = [
@@ -83,7 +85,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         show(widthField, "\(s.customWidth)")
         show(aspectW, "\(s.customAspectW)"); show(aspectH, "\(s.customAspectH)")
         show(crossfadeField, String(format: "%g", s.crossfade))
-        qualitySlider.doubleValue = s.quality
+        qualityField.setValue(s.quality)
         bitrateRow.isHidden = s.rateControl != .bitrate
         qualityRow.isHidden = s.rateControl != .quality
         widthRow.isHidden = s.resolution != .custom

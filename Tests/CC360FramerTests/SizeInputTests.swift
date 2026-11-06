@@ -51,4 +51,20 @@ final class SizeInputTests: XCTestCase {
         XCTAssertEqual(SizeInput.chosenText(pickedItem: nil, editorText: "50", stringValue: "24"), "50")
         XCTAssertEqual(SizeInput.chosenText(pickedItem: nil, editorText: nil, stringValue: "50"), "50")
     }
+
+    func testSliderFieldFormatAndStepRounding() {
+        XCTAssertEqual(SizeInput.format(70, decimals: 0), "70")
+        XCTAssertEqual(SizeInput.format(2.5, decimals: 1), "2.5")
+        XCTAssertEqual(SizeInput.format(3, decimals: 1), "3.0")
+        XCTAssertEqual(SizeInput.format(0.7, decimals: 2), "0.70")
+        XCTAssertEqual(SizeInput.parse("2,3", range: 0...12, step: 0.5), 2.5)
+        XCTAssertEqual(SizeInput.parse("2.2", range: 0...12, step: 0.5), 2)
+        XCTAssertEqual(SizeInput.parse("0.456", range: 0.1...1, step: 0.01), 0.46)
+        XCTAssertEqual(SizeInput.parse("0", range: 0.1...1, step: 0.01), 0.1)
+        XCTAssertEqual(SizeInput.parse("5", range: 0.1...1, step: 0.01), 1)
+        XCTAssertEqual(SizeInput.parse("200", range: 20...140), 140)
+        XCTAssertEqual(SizeInput.parse("10", range: 20...140), 20)
+        XCTAssertNil(SizeInput.parse("", range: 20...140))
+        XCTAssertNil(SizeInput.parse("abc", range: 20...140))
+    }
 }

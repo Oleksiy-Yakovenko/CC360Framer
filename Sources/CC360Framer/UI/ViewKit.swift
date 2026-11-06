@@ -171,6 +171,11 @@ enum Kit {
         return w
     }
 
+    /// A slider with an editable numeric field to its right (see `SliderField`); use it as the control of `Kit.row`.
+    static func sliderRow(_ slider: NSSlider, decimals: Int, step: Double, target: AnyObject, action: Selector) -> SliderField {
+        SliderField(slider: slider, decimals: decimals, step: step, target: target, action: action)
+    }
+
     /// Editable combo box with preset sizes: pick one or type any number (see `SizeInput`); the action fires on selection, Return and leaving the field.
     static func sizeCombo(presets: [Double], tip: String, target: AnyObject, action: Selector) -> NSComboBox {
         let c = SizeComboBox()
@@ -305,5 +310,79 @@ enum Kit {
     nonisolated static func time(_ s: Double) -> String {
         let t = Int(max(s, 0))
         return String(format: "%d:%02d", t / 60, t % 60)
+    }
+}
+
+
+/// Slider plus an editable value field (plain number, no unit). Dragging the slider updates the field; typing a number and
+/// pressing Return or leaving the field clamps to the slider range, rounds to `step`, moves the slider and sends the same
+/// action as a drag. The owner reads `slider.doubleValue` in its action and calls `setValue(_:)` when the model changes.
+@MainActor
+final class SliderField: NSStackView {
+    let slider: NSSlider
+    let field = NSTextField()
+    private let decimals: Int
+    private let step: Double
+    private weak var ownerTarget: AnyObject?
+    private var ownerAction: Selector
+
+    init(slider: NSSlider, decimals: Int, step: Double, target: AnyObject, action: Selector) {
+        self.slider = slider
+        self.decimals = decimals
+        self.step = step
+        ownerTarget = target
+        ownerAction = action
+        super.init(frame: .zero)
+        slider.target = self
+        slider.action = #selector(sliderMoved)
+        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.alignment = .right
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        field.target = self
+        field.action = #selector(fieldCommitted)
+        field.setContentHuggingPriority(.required, for: .horizontal)
+        field.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        field.stringValue = SizeInput.format(slider.doubleValue, decimals: decimals)
+        addArrangedSubview(slider)
+        addArrangedSubview(field)
+        spacing = 6
+        distribution = .fill
+        orientation = .horizontal
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var toolTip: String? {
+        didSet { field.toolTip = toolTip }
+    }
+
+    var isEnabled: Bool {
+        get { slider.isEnabled }
+        set { slider.isEnabled = newValue; field.isEnabled = newValue }
+    }
+
+    /// Sets the slider and shows the value, unless the user is typing in the field.
+    func setValue(_ v: Double) {
+        slider.doubleValue = v
+        if field.currentEditor() == nil { field.stringValue = SizeInput.format(v, decimals: decimals) }
+    }
+
+    private func send() {
+        NSApp.sendAction(ownerAction, to: ownerTarget, from: slider)
+    }
+
+    @objc private func sliderMoved() {
+        field.stringValue = SizeInput.format(slider.doubleValue, decimals: decimals)
+        send()
+    }
+
+    @objc private func fieldCommitted() {
+        let range = slider.minValue...slider.maxValue
+        guard let v = SizeInput.parse(field.stringValue, range: range, step: step) else {
+            field.stringValue = SizeInput.format(slider.doubleValue, decimals: decimals)   // invalid: revert
+            return
+        }
+        slider.doubleValue = v
+        field.stringValue = SizeInput.format(v, decimals: decimals)
+        send()
     }
 }
