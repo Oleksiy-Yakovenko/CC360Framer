@@ -117,6 +117,11 @@ struct OverlayPlan: Equatable {
     var autoCard = true
     var autoPlacement: OverlayPlacement = .bottomLeft
     var cardKeys: [LocationCardKey] = []
+    var captions: [Caption] = []
+    /// The global caption style (each caption applies its overrides on top).
+    var captionStyle = CaptionStyle()
+
+    static func captionImageKey(_ id: UUID) -> String { "cap.\(id.uuidString)" }
 
     /// Bitmap key of the location card for a placement: only the text alignment (left / centre / right) changes the bitmap.
     static func cardImageKey(_ p: OverlayPlacement) -> String { "card.\(Int(p.anchor.x))" }
@@ -132,6 +137,10 @@ struct OverlayPlan: Equatable {
         if hasPlace, let c = LocationCards.active(keys: cardKeys, autoEnabled: autoCard, autoPlacement: autoPlacement, at: t) {
             out.append(OverlayDraw(key: Self.cardImageKey(c.placement), placement: c.placement, alpha: c.alpha, size: .fractionOfShort(0.4)))
         }
+        for (c, alpha) in CaptionLogic.active(captions, at: t) {
+            out.append(OverlayDraw(key: Self.captionImageKey(c.id), placement: c.style(over: captionStyle).placement, alpha: alpha,
+                                   size: .referenceShort(Float(CaptionOverlay.referenceShort))))
+        }
         return out
     }
 }
@@ -143,13 +152,14 @@ struct OverlayBundle {
     var plan: OverlayPlan
 
     /// Builds the location card bitmaps the plan can use.
-    static func make(place: PlaceInfo?, plan: OverlayPlan, style: LocationCardStyle) -> OverlayBundle {
+    static func make(place: PlaceInfo?, plan: OverlayPlan, style: LocationCardStyle, captionCache: CaptionImageCache = CaptionImageCache()) -> OverlayBundle {
         var images: [String: CGImage] = [:]
         if let place {
             for p in plan.cardPlacements where images[OverlayPlan.cardImageKey(p)] == nil {
                 if let img = LocationOverlay.image(for: place, placement: p, style: style) { images[OverlayPlan.cardImageKey(p)] = img }
             }
         }
+        images.merge(captionCache.images(for: plan.captions, style: plan.captionStyle)) { a, _ in a }
         return OverlayBundle(images: images, plan: plan)
     }
 }

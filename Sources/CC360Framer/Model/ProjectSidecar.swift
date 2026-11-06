@@ -15,6 +15,9 @@ struct ProjectSidecar: Codable, Equatable {
     var locationCards: [LocationCardKey]?
     /// false = no automatic card at t = 0 (nil = on).
     var autoLocationCard: Bool?
+    /// Captions (source time) and the global caption style for this file (nil = none / app default).
+    var captions: [Caption]?
+    var captionStyle: CaptionStyle?
 
     static let kind = "project"
 

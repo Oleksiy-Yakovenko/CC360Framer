@@ -83,6 +83,7 @@ extension PlayerModel {
         case .keyframes: return KeyframeTimeline(model: self)
         case .cuts: return CutTimeline(model: self)
         case .locationCards: return LocationCardTimeline(model: self)
+        case .captions: return CaptionTimeline(model: self)
         }
     }
 

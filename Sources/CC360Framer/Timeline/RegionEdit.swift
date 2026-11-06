@@ -1,6 +1,6 @@
 import Foundation
 
-/// A stretch of the source timeline that can be selected and resized (cuts now, captions later).
+/// A stretch of the source timeline that can be selected and resized (cuts, captions).
 protocol TimeRegion: Identifiable where ID == UUID {
     var start: Double { get set }
     var end: Double { get set }
@@ -88,8 +88,9 @@ enum TimelineKind: String, CaseIterable {
     case keyframes = "Keyframes"
     case cuts = "Cuts"
     case locationCards = "Location cards"
+    case captions = "Captions"
 
-    var isRegion: Bool { self == .cuts }
+    var isRegion: Bool { self == .cuts || self == .captions }
 }
 
 /// Seekbar geometry and hit testing, separate from drawing so it can be tested.

@@ -25,6 +25,13 @@ final class ExportTabViewController: ModelViewController {
     private var fovCheck = NSButton()
     private let fovSlider = NSSlider(value: 70, minValue: 20, maxValue: 140, target: nil, action: nil)
     private let fovValue = NSTextField(labelWithString: "70°")
+    private var capPlacement = NSPopUpButton()
+    private var capFont = NSPopUpButton()
+    private let capSize = NSSlider(value: 5.5, minValue: 2, maxValue: 15, target: nil, action: nil)
+    private var capFill = NSColorWell()
+    private var capStroke = NSColorWell()
+    private let capStrokeWidth = NSSlider(value: 7, minValue: 0, maxValue: 20, target: nil, action: nil)
+    private var capReset = NSButton()
 
     override func loadView() {
         view = NSView()
@@ -48,6 +55,17 @@ final class ExportTabViewController: ModelViewController {
         fovRow.spacing = 6
         fovRow.identifier = Kit.fullWidthID
         settingsView.identifier = Kit.fullWidthID
+        capPlacement = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Default placement of captions; a caption can override it in the Inspector tab",
+                                 target: self, action: #selector(captionStyleChanged))
+        capFont = Kit.fontPopup(tip: "Default caption font family", target: self, action: #selector(captionStyleChanged))
+        capFont.insertItem(withTitle: CaptionStyle.systemFontName, at: 0)
+        capSize.target = self; capSize.action = #selector(captionStyleChanged)
+        capSize.toolTip = "Font size as a percentage of the frame's short side, so it looks the same at every export size"
+        capFill = Kit.colorWell(.white, tip: "Default caption text colour", target: self, action: #selector(captionStyleChanged))
+        capStroke = Kit.colorWell(.black, tip: "Default caption outline colour", target: self, action: #selector(captionStyleChanged))
+        capStrokeWidth.target = self; capStrokeWidth.action = #selector(captionStyleChanged)
+        capStrokeWidth.toolTip = "Outline width as a percentage of the font size (0 = none)"
+        capReset = Kit.button("Reset captions look", tip: "Back to bottom centre, white text with a black outline", target: self, action: #selector(captionStyleReset))
         Kit.sidebarStack(in: view, [
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
             settingsView,
@@ -55,6 +73,14 @@ final class ExportTabViewController: ModelViewController {
             cutsCheck,
             fovCheck,
             fovRow,
+            Kit.title("Captions", tip: "Default look of all captions (Captions timeline), in preview and export. Saved per video and as the default for other videos. Individual captions can override every setting in the Inspector tab."),
+            capPlacement,
+            Kit.labeledRow("Font", capFont),
+            Kit.labeledRow("Size", capSize, tip: "Font size, % of the frame's short side"),
+            Kit.labeledRow("Colour", capFill, tip: "Text colour"),
+            Kit.labeledRow("Outline", capStroke, tip: "Outline colour"),
+            Kit.labeledRow("Width", capStrokeWidth, tip: "Outline width, % of the font size"),
+            capReset,
             progressBar,
         ], topAnchor: view.topAnchor)
     }
@@ -67,6 +93,14 @@ final class ExportTabViewController: ModelViewController {
         fovSlider.isEnabled = model.globalFov.enabled
         fovSlider.doubleValue = Double(model.globalFov.degrees)
         fovValue.stringValue = "\(Int(model.globalFov.degrees.rounded()))°"
+        let cs = model.captionStyle
+        capPlacement.selectItem(at: OverlayPlacement.allCases.firstIndex(of: cs.placement) ?? 0)
+        capFont.selectItem(withTitle: cs.fontName ?? CaptionStyle.systemFontName)
+        capSize.doubleValue = cs.size * 100
+        capStrokeWidth.doubleValue = cs.strokeWidth
+        if capFill.color != cs.fill.nsColor { capFill.color = cs.fill.nsColor }
+        if capStroke.color != cs.stroke.nsColor { capStroke.color = cs.stroke.nsColor }
+        capReset.isEnabled = cs != CaptionStyle()
         if let p = model.exportProgress {
             progressBar.doubleValue = p
             progressBar.toolTip = "Exporting… \(Int(p * 100))%"
@@ -80,6 +114,27 @@ final class ExportTabViewController: ModelViewController {
         g.degrees = Float(fovSlider.doubleValue.rounded())
         model.globalFov = g
     }
+
+    @objc private func captionStyleChanged(_ sender: Any?) {
+        var s = model.captionStyle
+        s.placement = OverlayPlacement.allCases[max(capPlacement.indexOfSelectedItem, 0)]
+        s.fontName = capFont.indexOfSelectedItem == 0 ? nil : capFont.titleOfSelectedItem
+        s.size = (capSize.doubleValue * 2).rounded() / 200
+        s.strokeWidth = capStrokeWidth.doubleValue.rounded()
+        s.fill = CardColor(capFill.color)
+        s.stroke = CardColor(capStroke.color)
+        let name: String
+        switch sender as AnyObject? {
+        case let o where o === capPlacement: name = "Change Caption Placement"
+        case let o where o === capFont: name = "Change Caption Font"
+        case let o where o === capSize: name = "Change Caption Size"
+        case let o where o === capFill: name = "Change Caption Colour"
+        default: name = "Change Caption Outline"
+        }
+        model.setCaptionStyle(s, name: name)
+    }
+
+    @objc private func captionStyleReset() { model.setCaptionStyle(CaptionStyle(), name: "Reset Captions Look") }
 
     @objc private func cutsToggled() { model.previewWithCuts = cutsCheck.state == .on }
 
@@ -199,16 +254,24 @@ final class LocationTabViewController: ModelViewController {
 }
 
 /// Numeric editor for the selected timeline item: a keyframe, or the start and end of a cut.
-final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate {
+final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate, NSTextViewDelegate {
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let timeField = NSTextField(), yawField = NSTextField(), pitchField = NSTextField(), fovField = NSTextField()
     private let cutStartField = NSTextField(), cutEndField = NSTextField()
-    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField] }
+    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth] }
     private let cardTimeField = NSTextField()
     private var cardPlacementPopup = NSPopUpButton()
+    private let capStartField = NSTextField(), capEndField = NSTextField()
+    private let capTextView = NSTextView()
+    private var capScroll = NSScrollView()
+    private var ovPlacement = NSPopUpButton(), ovFont = NSPopUpButton()
+    private let ovSize = NSTextField(), ovStrokeWidth = NSTextField()
+    private var ovFill = NSColorWell(), ovStroke = NSColorWell()
+    private var ovReset = NSButton()
     private var keyForm: NSView!
     private var cutForm: NSView!
     private var cardForm: NSView!
+    private var captionForm: NSView!
     private let heading = Kit.title("Keyframe", tip: "Edit the selected item; changes can be undone.")
 
     override func loadView() {
@@ -240,9 +303,44 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         keyForm = form([Kit.labeledRow("Time (s)", timeField), Kit.labeledRow("Yaw (°)", yawField),
                         Kit.labeledRow("Pitch (°)", pitchField), Kit.labeledRow("FOV (°)", fovField)])
         cutForm = form([Kit.labeledRow("Start (s)", cutStartField), Kit.labeledRow("End (s)", cutEndField)])
+        capStartField.toolTip = "Start of the caption in seconds of the source video"
+        capEndField.toolTip = "End of the caption in seconds of the source video"
+        for f in [ovSize, ovStrokeWidth] { f.action = #selector(overrideFieldCommitted(_:)) }
+        ovSize.placeholderString = "default"
+        ovSize.toolTip = "Font size of this caption as a percentage of the frame's short side; empty = the default from the Export tab"
+        ovStrokeWidth.placeholderString = "default"
+        ovStrokeWidth.toolTip = "Outline width of this caption as a percentage of the font size; empty = the default from the Export tab"
+        ovPlacement = Kit.popup(["Default"] + OverlayPlacement.allCases.map(\.rawValue), tip: "Placement of this caption; Default = the Export tab's",
+                                target: self, action: #selector(overridesChanged))
+        ovFont = Kit.fontPopup(tip: "Font family of this caption; Default = the Export tab's", target: self, action: #selector(overridesChanged))
+        ovFont.insertItem(withTitle: CaptionStyle.systemFontName, at: 0)
+        ovFont.insertItem(withTitle: "Default", at: 0)
+        ovFill = Kit.colorWell(.white, tip: "Text colour of this caption (changing it overrides the default)", target: self, action: #selector(overridesChanged))
+        ovStroke = Kit.colorWell(.black, tip: "Outline colour of this caption (changing it overrides the default)", target: self, action: #selector(overridesChanged))
+        ovReset = Kit.button("Use defaults", tip: "Remove all overrides of this caption", target: self, action: #selector(overridesReset))
+        capTextView.isRichText = false
+        capTextView.allowsUndo = true
+        capTextView.isAutomaticQuoteSubstitutionEnabled = false
+        capTextView.isAutomaticDashSubstitutionEnabled = false
+        capTextView.font = .systemFont(ofSize: NSFont.systemFontSize)
+        capTextView.textContainerInset = NSSize(width: 2, height: 4)
+        capTextView.isVerticallyResizable = true
+        capTextView.autoresizingMask = [.width]
+        capTextView.delegate = self
+        capTextView.toolTip = "Caption text; Return starts a new line"
+        capScroll.documentView = capTextView
+        capScroll.hasVerticalScroller = true
+        capScroll.borderType = .bezelBorder
+        capScroll.heightAnchor.constraint(equalToConstant: 80).isActive = true
+        captionForm = form([Kit.labeledRow("Start (s)", capStartField), Kit.labeledRow("End (s)", capEndField),
+                            Kit.labeledRow("Text", capScroll, tip: "Caption text (several lines allowed)"),
+                            Kit.title("Overrides", tip: "Settings of this caption that differ from the default look in the Export tab"),
+                            Kit.labeledRow("Placement", ovPlacement), Kit.labeledRow("Font", ovFont),
+                            Kit.labeledRow("Size (%)", ovSize), Kit.labeledRow("Colour", ovFill),
+                            Kit.labeledRow("Outline", ovStroke), Kit.labeledRow("Width (%)", ovStrokeWidth), ovReset])
         cardForm = form([Kit.labeledRow("Time (s)", cardTimeField), Kit.labeledRow("Placement", cardPlacementPopup)])
         empty.identifier = Kit.fullWidthID
-        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm], topAnchor: view.topAnchor)
+        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm], topAnchor: view.topAnchor)
     }
 
     override func refresh() {
@@ -250,16 +348,19 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         let key = kind == .keyframes ? model.selectedKeyframe : nil
         let cut = kind == .cuts ? model.selectedCutRegion : nil
         let card = kind == .locationCards ? model.selectedCardKeyValue : nil
-        heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : "Keyframe"
+        let caption = kind == .captions ? model.selectedCaptionValue : nil
+        heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : kind == .captions ? "Caption" : "Keyframe"
         switch kind {
         case .cuts: empty.stringValue = "Select a cut (click its bar under the seekbar) to edit it here."
+        case .captions: empty.stringValue = "Select a caption (click its bar under the seekbar) to edit it here."
         case .locationCards: empty.stringValue = "Select a location card (click its diamond under the seekbar) to edit it here."
         default: empty.stringValue = "Select a keyframe (click a diamond under the seekbar) to edit it here."
         }
-        empty.isHidden = key != nil || cut != nil || card != nil
+        empty.isHidden = key != nil || cut != nil || card != nil || caption != nil
         keyForm.isHidden = key == nil
         cutForm.isHidden = cut == nil
         cardForm.isHidden = card == nil
+        captionForm.isHidden = caption == nil
         func show(_ f: NSTextField, _ x: Double, _ digits: Int) {
             if f.currentEditor() == nil { f.stringValue = String(format: "%.\(digits)f", x) }   // do not clobber typing
         }
@@ -268,9 +369,70 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
             show(timeField, v.time, 2); show(yawField, v.yaw, 1); show(pitchField, v.pitch, 1); show(fovField, v.fov, 1)
         }
         if let cut { show(cutStartField, cut.start, 2); show(cutEndField, cut.end, 2) }
+        if let caption { showCaption(caption) }
         if let card {
             show(cardTimeField, card.time, 2)
             cardPlacementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: card.placement) ?? 0)
+        }
+    }
+
+    private func showCaption(_ c: Caption) {
+        func show(_ f: NSTextField, _ x: Double, _ digits: Int) { if f.currentEditor() == nil { f.stringValue = String(format: "%.\(digits)f", x) } }
+        show(capStartField, c.start, 2); show(capEndField, c.end, 2)
+        if capTextView.string != c.text, capTextView.window?.firstResponder !== capTextView { capTextView.string = c.text }
+        let o = c.overrides ?? CaptionOverrides()
+        let r = c.style(over: model.captionStyle)
+        ovPlacement.selectItem(at: o.placement.flatMap { OverlayPlacement.allCases.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
+        ovFont.selectItem(at: 0)
+        if let f = o.fontName { ovFont.selectItem(withTitle: f) }
+        if ovSize.currentEditor() == nil { ovSize.stringValue = o.size.map { String(format: "%.1f", $0 * 100) } ?? "" }
+        if ovStrokeWidth.currentEditor() == nil { ovStrokeWidth.stringValue = o.strokeWidth.map { String(format: "%.0f", $0) } ?? "" }
+        if ovFill.color != r.fill.nsColor { ovFill.color = r.fill.nsColor }
+        if ovStroke.color != r.stroke.nsColor { ovStroke.color = r.stroke.nsColor }
+        ovReset.isEnabled = !o.isEmpty
+    }
+
+    func textDidChange(_ notification: Notification) {
+        let text = capTextView.string
+        model.editSelectedCaption(name: "Edit Caption Text") { $0.text = text }
+    }
+
+    @objc private func overridesReset() { model.editSelectedCaption(name: "Reset Caption Overrides") { $0.overrides = nil } }
+
+    @objc private func overridesChanged(_ sender: Any?) {
+        guard let cap = model.selectedCaptionValue else { return }
+        let before = cap.overrides ?? CaptionOverrides()
+        let base = model.captionStyle
+        var o = before
+        let name: String
+        switch sender as AnyObject? {
+        case let v where v === ovPlacement:
+            let i = ovPlacement.indexOfSelectedItem
+            o.placement = i <= 0 ? nil : OverlayPlacement.allCases[i - 1]
+            name = "Change Caption Placement"
+        case let v where v === ovFont:
+            o.fontName = ovFont.indexOfSelectedItem == 0 ? nil : ovFont.titleOfSelectedItem
+            name = "Change Caption Font"
+        case let v where v === ovFill:
+            o.fill = CardColor(ovFill.color); name = "Change Caption Colour"
+        case let v where v === ovStroke:
+            o.stroke = CardColor(ovStroke.color); name = "Change Caption Outline"
+        default: name = "Change Caption"
+        }
+        _ = base
+        model.editSelectedCaption(name: name) { $0.overrides = o }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        if let f = obj.object as? NSTextField, f === ovSize || f === ovStrokeWidth { overrideFieldCommitted(f) }
+    }
+
+    @objc private func overrideFieldCommitted(_ f: NSTextField) {
+        let v = Double(f.stringValue.replacingOccurrences(of: ",", with: "."))
+        model.editSelectedCaption(name: f === ovSize ? "Change Caption Size" : "Change Caption Outline") {
+            var o = $0.overrides ?? CaptionOverrides()
+            if f === ovSize { o.size = v.map { $0 / 100 } } else { o.strokeWidth = v }
+            $0.overrides = o
         }
     }
 
@@ -281,6 +443,13 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
             let t = parse(cardTimeField, card.time)
             cardTimeField.abortEditing()
             model.editSelectedCardKey(time: t, placement: OverlayPlacement.allCases[max(cardPlacementPopup.indexOfSelectedItem, 0)])
+            refresh()
+            return
+        }
+        if model.activeTimeline == .captions, let cap = model.selectedCaptionValue {
+            let (s, e) = (parse(capStartField, cap.start), parse(capEndField, cap.end))
+            for f in [capStartField, capEndField] { f.abortEditing() }
+            model.editSelectedCaption(start: s, end: e)
             refresh()
             return
         }

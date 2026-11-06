@@ -138,6 +138,28 @@ final class PlayerModel: ObservableObject {
         })
     var cardKeyDragStart: CardKeySnapshot?
 
+    /// Captions (source time), per file in the project sidecar.
+    @Published var captions: [Caption] = [] { didSet { if captions != oldValue { captionsChanged() } } }
+    @Published var selectedCaption: UUID?
+    struct CaptionSnapshot: Equatable { var captions: [Caption]; var selected: UUID? }
+    private(set) lazy var captionUndo = SnapshotUndo<CaptionSnapshot>(
+        manager: undo.manager,
+        capture: { [unowned self] in CaptionSnapshot(captions: captions, selected: selectedCaption) },
+        restore: { [unowned self] s in
+            captions = s.captions
+            selectedCaption = s.selected
+        })
+    var captionDragStart: CaptionSnapshot?
+    var lastCaptionEdit: (name: String, at: Date)?
+    /// Global caption look: app default in UserDefaults, per file in the project sidecar.
+    @Published var captionStyle = CaptionStyle.loadDefaults()
+    private(set) lazy var captionStyleUndo = SnapshotUndo<CaptionStyle>(
+        manager: undo.manager,
+        capture: { [unowned self] in captionStyle },
+        restore: { [unowned self] s in applyCaptionStyle(s) })
+    var lastCaptionStyleEdit: (name: String, at: Date)?
+    let captionImages = CaptionImageCache()
+
     /// Look of the location card; per file, saved in the project sidecar.
     @Published private(set) var cardStyle = LocationCardStyle()
     private var loadingProject = false
@@ -169,8 +191,9 @@ final class PlayerModel: ObservableObject {
     /// Rebuilds the overlay bitmaps and the plan and hands them to the preview (the export reads `overlays` when it starts).
     func rebuildOverlays() {
         guard !loadingProject else { return }
-        let plan = OverlayPlan(hasPlace: place != nil, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys)
-        overlays = OverlayBundle.make(place: place, plan: plan, style: cardStyle)
+        let plan = OverlayPlan(hasPlace: place != nil, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys,
+                               captions: captions, captionStyle: captionStyle)
+        overlays = OverlayBundle.make(place: place, plan: plan, style: cardStyle, captionCache: captionImages)
         onOverlays?(overlays)
         objectWillChange.send()   // the timeline bar enables Add once a place is known
     }
@@ -186,6 +209,9 @@ final class PlayerModel: ObservableObject {
         cardKeys = proj.locationCards ?? []
         selectedCardKey = nil
         autoLocationCard = proj.autoLocationCard ?? true
+        captions = proj.captions ?? []
+        selectedCaption = nil
+        captionStyle = proj.captionStyle ?? CaptionStyle.loadDefaults()
         previewWithCuts = proj.previewWithCuts ?? false
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
@@ -199,7 +225,8 @@ final class PlayerModel: ObservableObject {
         guard !loadingProject, let sourceURL else { return }
         ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov,
                        cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil,
-                       locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false).save(for: sourceURL)
+                       locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false,
+                       captions: captions.isEmpty ? nil : captions, captionStyle: captionStyle).save(for: sourceURL)
     }
 
     var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }
