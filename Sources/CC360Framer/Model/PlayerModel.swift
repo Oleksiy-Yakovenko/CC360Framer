@@ -128,6 +128,10 @@ final class PlayerModel: ObservableObject {
     private lazy var fallbackUndoManager = UndoManager()
     var undoManager: UndoManager { undoManagerProvider() ?? fallbackUndoManager }
     @Published var autoFollow = false
+    /// Preview only: outline the detected subjects of the nearest analysed frame. App-wide default (`showDetections`).
+    @Published var showDetections = UserDefaults.standard.bool(forKey: "showDetections") {
+        didSet { UserDefaults.standard.set(showDetections, forKey: "showDetections") }
+    }
     @Published var analysisProgress: Double?
     @Published var exportProgress: Double?
     @Published var statusText: String?

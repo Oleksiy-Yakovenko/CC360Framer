@@ -15,6 +15,9 @@ struct Candidate: Codable {
     var yaw: Float
     var pitch: Float
     var score: Float
+    /// The detection's box as 4 corners x (yaw, pitch) in the body frame, order: bottom-left, bottom-right, top-right, top-left
+    /// of the Vision box. nil in analyses made before boxes were stored (they decode as before).
+    var corners: [Float]? = nil
 }
 
 /// Raw detections at one point in time; path styles decide what to do with them.
@@ -125,6 +128,13 @@ enum Analyzer {
     private static func candidate(_ box: CGRect, viewYaw: Float, score: Float, stabilizer: Stabilizer?, t: Double) -> Candidate {
         var d = direction(viewYaw: viewYaw, ndcX: Float(box.midX - 0.5) * 2, ndcY: Float(box.midY - 0.5) * 2)
         if let stabilizer { d = stabilizer.toBody(yaw: d.yaw, pitch: d.pitch, at: t) }
-        return Candidate(yaw: d.yaw, pitch: d.pitch, score: score)
+        var corners: [Float] = []
+        for (x, y) in [(box.minX, box.minY), (box.maxX, box.minY), (box.maxX, box.maxY), (box.minX, box.maxY)] {
+            var c = direction(viewYaw: viewYaw, ndcX: Float(x - 0.5) * 2, ndcY: Float(y - 0.5) * 2)
+            if let stabilizer { c = stabilizer.toBody(yaw: c.yaw, pitch: c.pitch, at: t) }
+            // 4 decimals (~0.006 degrees) keep the sidecar small.
+            corners += [(c.yaw * 10000).rounded() / 10000, (c.pitch * 10000).rounded() / 10000]
+        }
+        return Candidate(yaw: d.yaw, pitch: d.pitch, score: score, corners: corners)
     }
 }

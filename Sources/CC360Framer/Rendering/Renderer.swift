@@ -433,6 +433,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.targetDebounceSeconds, execute: work)
     }
 
+    /// Called on the main thread in each draw, after the frame time is set (preview overlays that follow the video).
+    var onFrame: (() -> Void)?
+
     func draw(in view: MTKView) {
         let began = CACurrentMediaTime()
         var drawableWaited = 0.0
@@ -441,6 +444,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let host = targetHostTime > 0 ? targetHostTime : CACurrentMediaTime()
         if let src = incomingSource, src.takePromote() { promoteIncoming { self.state.frameTime = $0 } }
         if let (pb, time) = frameProvider?(host) { setFrame(pb); state.frameTime = time }
+        onFrame?()
         mixB = 0
         if let src = incomingSource {
             let inc = src.incoming(at: host, outgoingTime: state.frameTime)

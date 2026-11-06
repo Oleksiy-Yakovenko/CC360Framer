@@ -8,6 +8,7 @@ final class LeftSidebarViewController: ModelViewController {
     private var analyseButton = NSButton()
     private var buildButton = NSButton()
     private var reanalyseButton = NSButton()
+    private let detectionsCheck = NSButton(checkboxWithTitle: "Display detected subjects", target: nil, action: nil)
     private var stylePopup = NSPopUpButton()
     private var stabilizePopup = NSPopUpButton()
 
@@ -32,6 +33,10 @@ final class LeftSidebarViewController: ModelViewController {
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "How the camera path is generated", target: self, action: #selector(styleChosen))
         stabilizePopup = Kit.popup(StabilizeMode.allCases.map(\.rawValue), tip: "Horizon lock and shake removal from the camera's motion data", target: self, action: #selector(stabilizeChosen))
 
+        detectionsCheck.target = self
+        detectionsCheck.action = #selector(detectionsToggled)
+        detectionsCheck.toolTip = "Preview only: outline the people (green) and objects (yellow) found by the analysis at the nearest analysed frame (about 5 per second). Analyses made by older versions have no boxes: re-analyse to get them."
+
         let autoTitle = Kit.title("Auto", tip: "Follow the camera path: the view tracks the keyframes at the playhead.")
         let analysisTitle = Kit.title("Analysis", tip: "Detects people and objects; needed to build a camera path.")
         let pathTitle = Kit.title("Camera path", tip: "How the path is generated from the detections.")
@@ -39,11 +44,11 @@ final class LeftSidebarViewController: ModelViewController {
 
         let stack = Kit.sidebarStack(in: view, [
             autoTitle, autoButton,
-            analysisTitle, progress, cancelButton, analyseButton, buildButton, reanalyseButton,
+            analysisTitle, progress, cancelButton, analyseButton, buildButton, reanalyseButton, detectionsCheck,
             pathTitle, stylePopup,
             stabTitle, stabilizePopup,
         ])
-        for v in [autoButton, reanalyseButton, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
+        for v in [autoButton, reanalyseButton, detectionsCheck, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
         stack.setCustomSpacing(18, after: analyseButton)
         stack.setCustomSpacing(18, after: buildButton)
         stack.setCustomSpacing(18, after: cancelButton)
@@ -62,11 +67,15 @@ final class LeftSidebarViewController: ModelViewController {
         buildButton.isHidden = busy != nil || !analysed
         reanalyseButton.isHidden = busy != nil || !analysed
 
+        detectionsCheck.state = model.showDetections ? .on : .off
+        detectionsCheck.isEnabled = analysed
+
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: model.style) ?? 0)
         stabilizePopup.selectItem(at: StabilizeMode.allCases.firstIndex(of: model.stabilization) ?? 0)
     }
 
     @objc private func autoToggled() { model.autoFollow = autoButton.state == .on && !model.keyframes.isEmpty }
+    @objc private func detectionsToggled() { model.showDetections = detectionsCheck.state == .on }
     @objc private func cancelJob() { model.cancelJob() }
     @objc private func analyse() { model.analyze() }
     @objc private func buildPath() { model.buildPath() }
