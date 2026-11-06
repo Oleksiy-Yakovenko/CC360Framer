@@ -104,7 +104,7 @@ enum Analyzer {
                     // Prefer mid-sized objects: tiny ones are noise, frame-filling ones are just the surroundings.
                     let area = Float(o.boundingBox.width * o.boundingBox.height)
                     let edge = min(o.boundingBox.minX, 1 - o.boundingBox.maxX)
-                    let score = Float(o.confidence) * min(area * 4, 1) * areaScale * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
+                    let score = Self.salientScore(confidence: Float(o.confidence), area: area, edge: Float(edge))
                     obs.salient.append(candidate(o.boundingBox, viewYaw: viewYaw, score: score, viewFov: viewFov, stabilizer: stabilizer, t: t))
                 }
             }
@@ -113,6 +113,12 @@ enum Analyzer {
         }
         if reader.status == .failed { throw reader.error ?? Failure(errorDescription: "Decoding failed.") }
         return observations
+    }
+
+    /// Score of a salient object. View-relative and independent of the analysis quality on purpose: path styles
+    /// compare the average salient score with absolute thresholds (`SceneryPlanner`), so it must stay on the Fast scale.
+    static func salientScore(confidence: Float, area: Float, edge: Float) -> Float {
+        confidence * min(area * 4, 1) * (area > 0.5 ? 0.3 : 1) * (edge < 0.02 ? 0.5 : 1)
     }
 
     /// Direction of a point in a rectilinear view (aspect 1) looking at `viewYaw`, pitch 0.

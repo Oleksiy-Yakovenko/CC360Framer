@@ -93,4 +93,34 @@ final class SceneryForwardTests: XCTestCase {
         // Follow style ignores it.
         XCTAssertTrue(PathStyle.follow.keyframes(from: [], duration: 30, fov: 70, forwardYaw: { _ in 0.6 }).isEmpty)
     }
+
+    // MARK: Regression: salient scores must stay on the Fast scale (Best analysis gave 2-keyframe scenery paths)
+
+    private func sideScenery(scale: Float) -> [Observation] {
+        stride(from: 0.0, through: 24, by: 0.2).map {
+            Observation(t: $0, people: [],
+                        salient: [Candidate(yaw: 1.2, pitch: 0.05, score: 0.2 * scale), Candidate(yaw: -1.2, pitch: 0, score: 0.1 * scale)])
+        }
+    }
+
+    func testSceneryPlansSideGlancesForFastScaleSalientScores() {
+        let samples = SceneryPlanner.plan(sideScenery(scale: 1), duration: 24)
+        XCTAssertTrue(samples.contains { $0.fov == 55 && abs($0.yaw) > 0.5 })
+        let keys = PathStyle.scenery.keyframes(from: sideScenery(scale: 1), duration: 24, fov: 70)
+        XCTAssertGreaterThan(keys.count, 2)
+    }
+
+    func testSceneryDoesNotGlanceAtSalientScoresScaledByQuarter() {
+        // Documents the contract: the old Best-quality 0.25 scaling falls under the absolute 0.08 threshold.
+        let samples = SceneryPlanner.plan(sideScenery(scale: 0.25), duration: 24)
+        XCTAssertFalse(samples.contains { $0.fov == 55 })
+        XCTAssertEqual(PathStyle.scenery.keyframes(from: sideScenery(scale: 0.25), duration: 24, fov: 70).count, 2)
+    }
+
+    func testSalientScoreIndependentOfQuality() {
+        // The helper has no quality parameter; it is view-relative.
+        XCTAssertEqual(Analyzer.salientScore(confidence: 1, area: 0.1, edge: 0.3), 0.4, accuracy: 1e-6)
+        XCTAssertEqual(Analyzer.salientScore(confidence: 1, area: 0.6, edge: 0.3), 0.3, accuracy: 1e-6)
+        XCTAssertEqual(Analyzer.salientScore(confidence: 0.5, area: 0.3, edge: 0.01), 0.25, accuracy: 1e-6)
+    }
 }

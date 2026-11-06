@@ -43,9 +43,10 @@ enum AnalysisQuality: String, Codable, CaseIterable, Sendable {
     /// Centre yaw (radians) of view `index`.
     func viewYaw(_ index: Int) -> Float { Float(index) * 2 * .pi / Float(viewCount) }
 
-    /// Factor for the box-area term of a score so scores stay comparable across qualities: a narrower view makes
-    /// the same subject fill more of the image, so the area is scaled by the ratio of the view's solid angle to the
-    /// 90 degree reference view, (viewFov / 90)^2.
+    /// Factor for the box-area term of PERSON scores only: a narrower view makes the same person fill more of the
+    /// image, so the area is scaled by the ratio of the view's solid angle to the 90 degree reference view,
+    /// (viewFov / 90)^2. Person scores are only compared with each other (no absolute threshold). Salient scores
+    /// are NOT scaled: they are view-relative and `SceneryPlanner` applies an absolute threshold to them.
     static func areaScale(viewFov: Float) -> Float { (viewFov / 90) * (viewFov / 90) }
     var areaScale: Float { Self.areaScale(viewFov: viewFov) }
 
