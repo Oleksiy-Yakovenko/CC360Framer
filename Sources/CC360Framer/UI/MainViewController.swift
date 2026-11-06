@@ -47,12 +47,22 @@ final class CenterViewController: NSViewController {
             v.setContentHuggingPriority(.required, for: .vertical)
             v.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        // Container that owns a black backdrop and pins the stack to its real edges (not the safe area), so the
-        // preview runs underneath the transparent unified toolbar instead of leaving window-gray strip above it.
+        // Container that pins the stack to its real edges (not the safe area), so the preview runs underneath the
+        // transparent unified toolbar instead of leaving window-gray strip above it. Only the player area (and the
+        // strip under the toolbar) is black; the controls below keep the window background.
         let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.cgColor
+        let backdrop = NSView()
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor.black.cgColor
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(backdrop)
         Kit.pin(stack, to: container)
+        NSLayoutConstraint.activate([
+            backdrop.topAnchor.constraint(equalTo: container.topAnchor),
+            backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: player.view.bottomAnchor),
+        ])
         view = container
     }
 }
