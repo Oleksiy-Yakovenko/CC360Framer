@@ -103,7 +103,7 @@ enum Kit {
         return stack
     }
 
-    /// Width of the label column of every settings grid (labels are left-aligned; all pages share it so values line up).
+    /// Width of the label column of every settings grid (labels are right-aligned, so each sits next to its control; all pages share the width so values line up).
     static let labelColumnWidth: CGFloat = 88
 
     /// A row `Label | control`. `fill`: the control stretches to the right edge; false keeps its own (fixed) size at the controls column.
@@ -111,6 +111,7 @@ enum Kit {
     static func row(_ label: String, _ control: NSView, tip: String? = nil, fill: Bool = true, top: Bool = false) -> GridRow {
         let l = NSTextField(labelWithString: label)
         l.toolTip = tip
+        l.alignment = .right
         l.lineBreakMode = .byClipping
         l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -143,7 +144,7 @@ enum Kit {
                 gr.mergeCells(in: NSRange(location: 0, length: 2))
                 g.cell(atColumnIndex: 0, rowIndex: i).xPlacement = .leading
             } else {
-                g.cell(atColumnIndex: 0, rowIndex: i).xPlacement = .leading
+                g.cell(atColumnIndex: 0, rowIndex: i).xPlacement = .trailing
                 g.cell(atColumnIndex: 1, rowIndex: i).xPlacement = r.fill ? .fill : .leading
             }
         }
