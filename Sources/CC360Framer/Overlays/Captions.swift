@@ -139,12 +139,13 @@ enum CaptionLogic {
 }
 
 enum CaptionOverlay {
-    /// Short side of the frame the bitmaps are rendered for (`OverlaySize.referenceShort`); bigger frames scale them up slightly.
+    /// Short side used when no target size is given.
     static let referenceShort: CGFloat = 2160
 
-    /// Bitmap of the caption text (multi-line, aligned by the placement) with an outline.
-    static func image(text: String, style: CaptionStyle) -> CGImage? {
-        let px = CGFloat(style.size) * referenceShort
+    /// Bitmap of the caption text (multi-line, aligned by the placement) with an outline, rasterised for a frame whose
+    /// short side is `short` pixels (font pixel size = `style.size * short`, so it is drawn 1:1 into such a frame).
+    static func image(text: String, style: CaptionStyle, short: CGFloat = referenceShort) -> CGImage? {
+        let px = CGFloat(style.size) * short
         let para = NSMutableParagraphStyle()
         switch style.placement.anchor.x {
         case -1: para.alignment = .left
@@ -177,21 +178,22 @@ final class CaptionImageCache {
     private struct Signature: Equatable {
         var text: String
         var style: CaptionStyle
+        var targetShort: Int
     }
     private var entries: [UUID: (sig: Signature, image: CGImage?)] = [:]
     private(set) var renders = 0
 
     /// Bitmaps for all captions (keyed by `OverlayPlan.captionImageKey`); entries of deleted captions are dropped.
-    func images(for captions: [Caption], style: CaptionStyle) -> [String: CGImage] {
+    func images(for captions: [Caption], style: CaptionStyle, targetShort: Int = 1080) -> [String: CGImage] {
         var out: [String: CGImage] = [:]
         var kept: [UUID: (sig: Signature, image: CGImage?)] = [:]
         for c in captions where !c.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let sig = Signature(text: c.text, style: c.style(over: style))
+            let sig = Signature(text: c.text, style: c.style(over: style), targetShort: targetShort)
             if let e = entries[c.id], e.sig == sig {
                 kept[c.id] = e
             } else {
                 renders += 1
-                kept[c.id] = (sig, CaptionOverlay.image(text: sig.text, style: sig.style))
+                kept[c.id] = (sig, CaptionOverlay.image(text: sig.text, style: sig.style, short: CGFloat(targetShort)))
             }
             if let img = kept[c.id]?.image { out[OverlayPlan.captionImageKey(c.id)] = img }
         }

@@ -79,7 +79,7 @@ enum BatchJob {
         let settings = options.exportSettings
         let global = project.globalFov ?? GlobalFov.loadDefaults()
         let map = TimeMap(cuts: project.cuts ?? [], duration: duration, crossfade: settings.crossfade)
-        let overlays = await overlayBundle(url: url, project: project, telemetry: telemetry)
+        let overlays = await overlayBundle(url: url, project: project, telemetry: telemetry, settings: settings)
         let audioIDs = session.audioOptions.filter(\.enabled).map(\.id)
         let mix = session.audioMix(for: session.audioOptions)
         let path = CameraPath(keys: keys)
@@ -96,7 +96,7 @@ enum BatchJob {
 
     /// Location card and captions of the file, as in the interactive player.
     @MainActor
-    private static func overlayBundle(url: URL, project: ProjectSidecar, telemetry: Telemetry?) async -> OverlayBundle {
+    private static func overlayBundle(url: URL, project: ProjectSidecar, telemetry: Telemetry?, settings: ExportSettings) async -> OverlayBundle {
         var place: PlaceInfo?
         if let fix = telemetry?.gps {
             place = await PlaceInfo.resolve(fix: fix, cacheFor: url)
@@ -106,6 +106,7 @@ enum BatchJob {
         let captionStyle = project.captionStyle ?? CaptionStyle.loadDefaults()
         let plan = OverlayPlan(hasPlace: place != nil, showCard: project.showLocationCard ?? true, cardFields: project.locationFields ?? LocationCardFields(), autoCard: project.autoLocationCard ?? true, autoPlacement: placement,
                                cardKeys: project.locationCards ?? [], captions: project.captions ?? [], captionStyle: captionStyle)
-        return OverlayBundle.make(place: place, plan: plan, style: project.locationStyle ?? LocationCardStyle(), captionCache: CaptionImageCache())
+        return OverlayBundle.make(place: place, plan: plan, style: project.locationStyle ?? LocationCardStyle(),
+                                  targetShort: OverlayScale.short(width: Double(settings.outputSize.width), height: Double(settings.outputSize.height)))
     }
 }

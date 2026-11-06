@@ -87,7 +87,9 @@ enum OverlayLayout {
     /// Widest an overlay may get, as a share of the frame width.
     static let maxWidth: Float = 0.9
 
-    /// Normalised device rectangle (x0, y0, x1, y1) of an overlay bitmap in a target of the given size.
+    /// Normalised device rectangle (x0, y0, x1, y1) of an overlay bitmap in a target of the given size. Size and origin are
+    /// snapped to whole target pixels, so a bitmap drawn 1:1 (`referenceShort` equal to the target's short side) lands
+    /// exactly on the pixel grid and is not resampled.
     static func rect(texWidth: Int, texHeight: Int, targetWidth: Float, targetHeight: Float,
                      placement: OverlayPlacement, size: OverlaySize) -> (x0: Float, y0: Float, x1: Float, y1: Float) {
         let short = min(targetWidth, targetHeight)
@@ -98,13 +100,28 @@ enum OverlayLayout {
         }
         var w = h * Float(texWidth) / Float(max(texHeight, 1))
         if w > targetWidth * maxWidth { w = targetWidth * maxWidth; h = w * Float(texHeight) / Float(max(texWidth, 1)) }
-        let ndcW = 2 * w / targetWidth, ndcH = 2 * h / targetHeight
-        let mx = 2 * short * margin / targetWidth, my = 2 * short * margin / targetHeight
+        w = max(w.rounded(), 1); h = max(h.rounded(), 1)
+        let mx = (short * margin).rounded(), my = (short * margin).rounded()
         let a = placement.anchor
-        let x0 = a.x < 0 ? -1 + mx : a.x > 0 ? 1 - mx - ndcW : -ndcW / 2
-        let y0 = a.y < 0 ? -1 + my : a.y > 0 ? 1 - my - ndcH : -ndcH / 2
-        return (x0, y0, x0 + ndcW, y0 + ndcH)
+        let x0 = a.x < 0 ? mx : a.x > 0 ? targetWidth - mx - w : ((targetWidth - w) / 2).rounded()
+        let y0 = a.y < 0 ? my : a.y > 0 ? targetHeight - my - h : ((targetHeight - h) / 2).rounded()
+        func nx(_ v: Float) -> Float { 2 * v / targetWidth - 1 }
+        func ny(_ v: Float) -> Float { 2 * v / targetHeight - 1 }
+        return (nx(x0), ny(y0), nx(x0 + w), ny(y0 + h))
     }
+}
+
+/// Overlay bitmaps are rasterised at the pixel scale they are drawn at (bitmap pixel == target pixel), so text stays crisp
+/// at every preview window size and export size.
+enum OverlayScale {
+    /// Frame short side the location card's point sizes refer to: a 64 pt headline is 64 px in a 1080 px short side.
+    static let cardReferenceShort: CGFloat = 1080
+
+    /// Short side of a target in whole pixels (at least 1).
+    static func short(width: Double, height: Double) -> Int { max(Int(min(width, height).rounded()), 1) }
+
+    /// Multiplier for the card's font sizes, padding, gap and shadow when rasterising for a target short side.
+    static func cardFactor(targetShort: Int) -> CGFloat { CGFloat(max(targetShort, 1)) / cardReferenceShort }
 }
 
 /// Everything that decides which overlays are drawn at a source time (immutable, so the preview and the export
@@ -136,34 +153,71 @@ struct OverlayPlan: Equatable {
         return cardKeys.isEmpty ? (autoCard ? [autoPlacement] : []) : cardKeys.map(\.placement)
     }
 
-    func draws(at t: Double) -> [OverlayDraw] {
+    /// `builtShort`: short side of the target the bitmaps were rasterised for (`OverlayBundle.targetShort`); drawing into a
+    /// target of another size scales them by the ratio (1:1 when equal).
+    func draws(at t: Double, builtShort: Int = 1080) -> [OverlayDraw] {
+        let built = Float(max(builtShort, 1))
         var out: [OverlayDraw] = []
         if hasPlace, showCard, let c = LocationCards.active(keys: cardKeys, autoEnabled: autoCard, autoPlacement: autoPlacement, at: t) {
-            out.append(OverlayDraw(key: Self.cardImageKey(c.placement), placement: c.placement, alpha: c.alpha, size: .fractionOfShort(0.4)))
+            out.append(OverlayDraw(key: Self.cardImageKey(c.placement), placement: c.placement, alpha: c.alpha, size: .referenceShort(built)))
         }
         for (c, alpha) in CaptionLogic.active(captions, at: t) {
             out.append(OverlayDraw(key: Self.captionImageKey(c.id), placement: c.style(over: captionStyle).placement, alpha: alpha,
-                                   size: .referenceShort(Float(CaptionOverlay.referenceShort))))
+                                   size: .referenceShort(built)))
         }
+        return out
+    }
+}
+
+/// Location card bitmaps, rebuilt only when the place, the text alignment, the style, the shown fields or the target size change.
+final class CardImageCache {
+    private struct Signature: Equatable {
+        var place: PlaceInfo
+        var alignment: Int
+        var style: LocationCardStyle
+        var fields: LocationCardFields
+        var targetShort: Int
+    }
+    private var entries: [String: (sig: Signature, image: CGImage?)] = [:]
+    private(set) var renders = 0
+
+    /// Bitmaps for the placements (keyed by `OverlayPlan.cardImageKey`); entries no longer needed are dropped.
+    func images(place: PlaceInfo, placements: [OverlayPlacement], style: LocationCardStyle, fields: LocationCardFields, targetShort: Int) -> [String: CGImage] {
+        var out: [String: CGImage] = [:]
+        var kept: [String: (sig: Signature, image: CGImage?)] = [:]
+        for p in placements {
+            let key = OverlayPlan.cardImageKey(p)
+            if kept[key] != nil { continue }
+            let sig = Signature(place: place, alignment: Int(p.anchor.x), style: style, fields: fields, targetShort: targetShort)
+            if let e = entries[key], e.sig == sig {
+                kept[key] = e
+            } else {
+                renders += 1
+                kept[key] = (sig, LocationOverlay.image(for: place, placement: p, style: style, fields: fields, scale: OverlayScale.cardFactor(targetShort: targetShort)))
+            }
+            if let img = kept[key]?.image { out[key] = img }
+        }
+        entries = kept
         return out
     }
 }
 
 /// Bitmaps plus the plan that says when and where to draw them; handed to the `Renderer` (preview and export).
 struct OverlayBundle {
-    static let empty = OverlayBundle(images: [:], plan: .empty)
+    static let empty = OverlayBundle(images: [:], plan: .empty, targetShort: 1080)
     var images: [String: CGImage]
     var plan: OverlayPlan
+    /// Short side (pixels) of the target the bitmaps were rasterised for: text is drawn 1:1 into a target of this size.
+    var targetShort: Int
 
-    /// Builds the location card bitmaps the plan can use.
-    static func make(place: PlaceInfo?, plan: OverlayPlan, style: LocationCardStyle, captionCache: CaptionImageCache = CaptionImageCache()) -> OverlayBundle {
+    /// Builds the card and caption bitmaps the plan can use, rasterised for a target whose short side is `targetShort` pixels.
+    static func make(place: PlaceInfo?, plan: OverlayPlan, style: LocationCardStyle, targetShort: Int = 1080,
+                     cardCache: CardImageCache = CardImageCache(), captionCache: CaptionImageCache = CaptionImageCache()) -> OverlayBundle {
         var images: [String: CGImage] = [:]
         if let place {
-            for p in plan.cardPlacements where images[OverlayPlan.cardImageKey(p)] == nil {
-                if let img = LocationOverlay.image(for: place, placement: p, style: style, fields: plan.cardFields) { images[OverlayPlan.cardImageKey(p)] = img }
-            }
+            images = cardCache.images(place: place, placements: plan.cardPlacements, style: style, fields: plan.cardFields, targetShort: targetShort)
         }
-        images.merge(captionCache.images(for: plan.captions, style: plan.captionStyle)) { a, _ in a }
-        return OverlayBundle(images: images, plan: plan)
+        images.merge(captionCache.images(for: plan.captions, style: plan.captionStyle, targetShort: targetShort)) { a, _ in a }
+        return OverlayBundle(images: images, plan: plan, targetShort: targetShort)
     }
 }

@@ -156,6 +156,14 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Overlay bitmaps by key plus the plan deciding what to draw at a time; guarded by a lock (set from the UI, read when drawing).
     private var overlayTextures: [String: (image: CGImage, texture: MTLTexture)] = [:]
     private var overlayPlan = OverlayPlan.empty
+    private var overlayBuiltShort = 1080
+    /// Preview: called (on the main queue, debounced) with the short side in pixels the overlays should be rasterised for,
+    /// when it differs from what was last asked for; until the new bitmaps arrive the old ones are drawn scaled.
+    var onOverlayTarget: ((Int) -> Void)?
+    private var requestedShort = 0
+    private var pendingShort = 0
+    private var targetDebounce: DispatchWorkItem?
+    static let targetDebounceSeconds = 0.15
     private let overlayLock = NSLock()
 
     init(device: MTLDevice, state: ViewState, pixelFormat: MTLPixelFormat) throws {
@@ -235,6 +243,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         overlayTextures = textures
         overlayPlan = bundle.plan
+        overlayBuiltShort = bundle.targetShort
     }
 
     private func makeOverlayTexture(_ image: CGImage) -> MTLTexture? {
@@ -252,9 +261,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Composites every overlay that is active at the frame's (source) time, in plan order, over the picture.
     private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float) {
         overlayLock.lock()
-        let plan = overlayPlan, textures = overlayTextures
+        let plan = overlayPlan, textures = overlayTextures, built = overlayBuiltShort
         overlayLock.unlock()
-        for d in plan.draws(at: state.frameTime) {
+        for d in plan.draws(at: state.frameTime, builtShort: built) {
             guard let tex = textures[d.key]?.texture else { continue }
             let r = OverlayLayout.rect(texWidth: tex.width, texHeight: tex.height, targetWidth: targetWidth, targetHeight: targetHeight,
                                        placement: d.placement, size: d.size)
@@ -335,6 +344,22 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// Asks (debounced) for overlay bitmaps matching the preview's drawable size, so live resizing does not re-rasterise per frame.
+    private func noteOverlayTarget(_ size: CGSize) {
+        let short = OverlayScale.short(width: size.width, height: size.height)
+        guard short != pendingShort else { return }
+        pendingShort = short
+        targetDebounce?.cancel()
+        guard short != requestedShort else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingShort == short else { return }
+            self.requestedShort = short
+            self.onOverlayTarget?(short)
+        }
+        targetDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.targetDebounceSeconds, execute: work)
+    }
+
     func draw(in view: MTKView) {
         let began = CACurrentMediaTime()
         var drawableWaited = 0.0
@@ -348,6 +373,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
         let size = view.drawableSize
+        noteOverlayTarget(size)
         encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)), size: size, showGuide: true)
         cb.present(drawable)
         if Pacing.enabled {

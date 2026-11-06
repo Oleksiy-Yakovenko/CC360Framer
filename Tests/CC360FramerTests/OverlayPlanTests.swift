@@ -60,7 +60,7 @@ final class OverlayPlanTests: XCTestCase {
     func testLayoutAnchorsAndScaling() {
         // 1920x1080 target, card bitmap 400x200 drawn at 40 % of the short side: 432 px high, 864 wide.
         let r = OverlayLayout.rect(texWidth: 400, texHeight: 200, targetWidth: 1920, targetHeight: 1080, placement: .bottomLeft, size: .fractionOfShort(0.4))
-        XCTAssertEqual(r.x0, -1 + 2 * 43.2 / 1920, accuracy: 1e-5)
+        XCTAssertEqual(r.x0, -1 + 2 * 43.0 / 1920, accuracy: 1e-5)   // margin 43.2 px snapped to 43
         XCTAssertEqual((r.x1 - r.x0) * 1920 / 2, 864, accuracy: 0.01)
         XCTAssertEqual((r.y1 - r.y0) * 1080 / 2, 432, accuracy: 0.01)
         let c = OverlayLayout.rect(texWidth: 400, texHeight: 200, targetWidth: 1920, targetHeight: 1080, placement: .center, size: .fractionOfShort(0.4))
@@ -68,7 +68,7 @@ final class OverlayPlanTests: XCTestCase {
         // Reference size: a 200 px high bitmap made for a 2160 short side is 100 px at 1080.
         let ref = OverlayLayout.rect(texWidth: 400, texHeight: 200, targetWidth: 1920, targetHeight: 1080, placement: .topRight, size: .referenceShort(2160))
         XCTAssertEqual((ref.y1 - ref.y0) * 1080 / 2, 100, accuracy: 0.01)
-        XCTAssertEqual(ref.x1, 1 - 2 * 43.2 / 1920, accuracy: 1e-5)
+        XCTAssertEqual(ref.x1, 1 - 2 * 43.0 / 1920, accuracy: 1e-5)
         // Too wide: limited to 90 % of the width, aspect kept.
         let wide = OverlayLayout.rect(texWidth: 4000, texHeight: 200, targetWidth: 1000, targetHeight: 1000, placement: .center, size: .fractionOfShort(0.4))
         XCTAssertEqual((wide.x1 - wide.x0) * 1000 / 2, 900, accuracy: 0.01)
@@ -166,5 +166,89 @@ final class OverlayPlanTests: XCTestCase {
         let partial = ProjectSidecar.decode(Data(#"{"locationFields":{"street":true}}"#.utf8))
         var want = LocationCardFields(); want.street = true
         XCTAssertEqual(partial?.locationFields, want)
+    }
+
+    func testScaleFactorsForTargets() {
+        XCTAssertEqual(OverlayScale.cardFactor(targetShort: 1080), 1, accuracy: 1e-9)
+        XCTAssertEqual(OverlayScale.cardFactor(targetShort: 720), 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(OverlayScale.cardFactor(targetShort: 2160), 2, accuracy: 1e-9)
+        XCTAssertEqual(OverlayScale.cardFactor(targetShort: 0), 1.0 / 1080, accuracy: 1e-9)
+        XCTAssertEqual(OverlayScale.short(width: 3840, height: 2160), 2160)
+        XCTAssertEqual(OverlayScale.short(width: 1080, height: 1920), 1080)
+        XCTAssertEqual(OverlayScale.short(width: 0, height: 100), 1)
+    }
+
+    func testBitmapSizeFollowsTargetShort() throws {
+        let info = PlaceInfo(latitude: 55, longitude: 12, country: "Denmark", altitude: 5, city: "Copenhagen")
+        let h = { (short: Int) -> Int in
+            LocationOverlay.image(for: info, placement: .bottomLeft, scale: OverlayScale.cardFactor(targetShort: short))?.height ?? 0
+        }
+        // Bitmap height is proportional to the target short side (rounding of text metrics aside).
+        XCTAssertEqual(Double(h(2160)) / Double(h(1080)), 2, accuracy: 0.05)
+        XCTAssertEqual(Double(h(720)) / Double(h(1080)), 2.0 / 3, accuracy: 0.05)
+        XCTAssertEqual(LocationOverlay.image(for: info, placement: .bottomLeft)?.height, h(1080))
+    }
+
+    func testLayoutIsOneToOneWhenBuiltForTarget() {
+        for (w, h) in [(1280.0, 720.0), (1920, 1080), (3840, 2160), (1080, 1920)] {
+            let short = Float(min(w, h))
+            let r = OverlayLayout.rect(texWidth: 600, texHeight: 301, targetWidth: Float(w), targetHeight: Float(h), placement: .bottomLeft, size: .referenceShort(short))
+            XCTAssertEqual((r.x1 - r.x0) * Float(w) / 2, 600, accuracy: 1e-2)
+            XCTAssertEqual((r.y1 - r.y0) * Float(h) / 2, 301, accuracy: 1e-2)
+            // Origin on a whole pixel.
+            let px = (r.x0 + 1) * Float(w) / 2, py = (r.y0 + 1) * Float(h) / 2
+            XCTAssertEqual(px, px.rounded(), accuracy: 1e-2)
+            XCTAssertEqual(py, py.rounded(), accuracy: 1e-2)
+        }
+        // Centre placement with odd leftover pixels still snaps to the grid.
+        let c = OverlayLayout.rect(texWidth: 601, texHeight: 301, targetWidth: 1920, targetHeight: 1080, placement: .center, size: .referenceShort(1080))
+        let cx = (c.x0 + 1) * 960
+        XCTAssertEqual(cx, cx.rounded(), accuracy: 1e-2)
+    }
+
+    func testDrawsUseBuiltShortAsReference() {
+        let plan = OverlayPlan(hasPlace: true, autoCard: true, autoPlacement: .bottomLeft, captions: [Caption(start: 0, end: 5, text: "x")])
+        let d = plan.draws(at: 2, builtShort: 720)
+        XCTAssertEqual(d.count, 2)
+        XCTAssertTrue(d.allSatisfy { $0.size == .referenceShort(720) })
+    }
+
+    func testCardCacheInvalidatesOnTargetStyleAndFields() {
+        let info = PlaceInfo(latitude: 55, longitude: 12, country: "Denmark", altitude: 5, city: "Copenhagen")
+        let cache = CardImageCache()
+        var style = LocationCardStyle(), fields = LocationCardFields()
+        func build(_ short: Int) -> [String: CGImage] { cache.images(place: info, placements: [.bottomLeft, .topLeft, .center], style: style, fields: fields, targetShort: short) }
+        let a = build(1080)
+        XCTAssertEqual(Set(a.keys), ["card.-1", "card.0"])
+        XCTAssertEqual(cache.renders, 2)
+        let b = build(1080)
+        XCTAssertEqual(cache.renders, 2)
+        XCTAssertTrue(a["card.-1"] === b["card.-1"])
+        let c = build(1440)   // preview resized: re-rasterised
+        XCTAssertEqual(cache.renders, 4)
+        XCTAssertGreaterThan(c["card.-1"]!.height, a["card.-1"]!.height)
+        style.baseSize = 80
+        _ = build(1440)
+        XCTAssertEqual(cache.renders, 6)
+        fields.street = true
+        _ = build(1440)
+        XCTAssertEqual(cache.renders, 8)
+    }
+
+    func testCaptionCacheInvalidatesOnTarget() throws {
+        let cache = CaptionImageCache()
+        let cap = Caption(start: 0, end: 3, text: "Hello")
+        let a = cache.images(for: [cap], style: CaptionStyle(), targetShort: 1080)
+        _ = cache.images(for: [cap], style: CaptionStyle(), targetShort: 1080)
+        XCTAssertEqual(cache.renders, 1)
+        let b = cache.images(for: [cap], style: CaptionStyle(), targetShort: 2160)
+        XCTAssertEqual(cache.renders, 2)
+        let key = OverlayPlan.captionImageKey(cap.id)
+        XCTAssertEqual(Double(b[key]!.height) / Double(a[key]!.height), 2, accuracy: 0.1)
+    }
+
+    func testBundleRecordsTargetShort() {
+        let plan = OverlayPlan(captions: [Caption(start: 0, end: 1, text: "x")])
+        XCTAssertEqual(OverlayBundle.make(place: nil, plan: plan, style: LocationCardStyle(), targetShort: 720).targetShort, 720)
     }
 }

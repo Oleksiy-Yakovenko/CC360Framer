@@ -20,6 +20,7 @@ final class PlayerViewController: ModelViewController {
         renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
         model.onOverlays = { [weak renderer] in renderer?.setOverlays($0) }
         model.onOverlays?(model.overlays)
+        renderer.onOverlayTarget = { [weak model] in model?.setOverlayTarget(short: $0) }
         look.delegate = renderer
         self.renderer = renderer
         lookView = look

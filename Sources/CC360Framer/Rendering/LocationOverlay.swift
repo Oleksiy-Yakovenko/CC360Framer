@@ -195,7 +195,7 @@ struct LocationCardStyle: Codable, Equatable {
     }
 }
 
-/// Title card shown at the start of the clip, drawn once into a bitmap and composited by the renderer.
+/// Title card shown at the start of the clip, drawn into a bitmap at the target pixel scale (`scale` multiplies sizes, pad, gap and shadow; see `OverlayScale`) and composited by the renderer.
 enum LocationOverlay {
     static let visibleSeconds = 10.0
     private static let fade = 0.6
@@ -207,27 +207,28 @@ enum LocationOverlay {
     }
 
     static func image(for info: PlaceInfo, placement: OverlayPlacement, style: LocationCardStyle = LocationCardStyle(),
-                      fields: LocationCardFields = LocationCardFields()) -> CGImage? {
+                      fields: LocationCardFields = LocationCardFields(), scale: CGFloat = 1) -> CGImage? {
         let lines = info.cardLines(fields)
         guard !lines.isEmpty else { return nil }
-        let sizes = style.sizes(lineCount: lines.count)
+        let scale = max(scale, 0.01)
+        let sizes = style.sizes(lineCount: lines.count).map { $0 * scale }
         let attributed = zip(lines, sizes).enumerated().map { i, pair -> NSAttributedString in
             let (line, size) = pair
             let text = line.text
             let font = style.font(size: size, bold: i == 0)
             let shadow = NSShadow()
             shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
-            shadow.shadowBlurRadius = 8
+            shadow.shadowBlurRadius = 8 * scale
             shadow.shadowOffset = .zero
             var attrs: [NSAttributedString.Key: Any] = [.font: font, .shadow: shadow,
                 .foregroundColor: style.fill.nsColor.withAlphaComponent(CGFloat(style.fill.a) * (line.detail ? 0.85 : 1))]
             if style.strokeWidth > 0 {
                 attrs[.strokeColor] = style.stroke.nsColor
-                attrs[.strokeWidth] = -style.strokeWidth / size * 100   // negative = stroke and fill
+                attrs[.strokeWidth] = -style.strokeWidth * scale / size * 100   // negative = stroke and fill
             }
             return NSAttributedString(string: text, attributes: attrs)
         }
-        let pad: CGFloat = 24, gap: CGFloat = 8
+        let pad: CGFloat = 24 * scale, gap: CGFloat = 8 * scale
         let widths = attributed.map { ceil($0.size().width) }
         let heights = attributed.map { ceil($0.size().height) }
         let w = Int((widths.max() ?? 1) + 2 * pad), h = Int(heights.reduce(0, +) + gap * CGFloat(max(attributed.count - 1, 0)) + 2 * pad)

@@ -71,7 +71,7 @@ final class CaptionTests: XCTestCase {
         let cap = Caption(start: 2, end: 8, text: "hello", overrides: CaptionOverrides(placement: .topCenter))
         let plan = OverlayPlan(hasPlace: true, autoCard: true, autoPlacement: .bottomLeft, cardKeys: [],
                                captions: [cap, Caption(start: 20, end: 24, text: "later")], captionStyle: CaptionStyle())
-        let d = plan.draws(at: 4)
+        let d = plan.draws(at: 4, builtShort: 2160)
         XCTAssertEqual(d.map(\.key), ["card.-1", OverlayPlan.captionImageKey(cap.id)])
         XCTAssertEqual(d[1].placement, .topCenter)
         XCTAssertEqual(d[1].size, .referenceShort(Float(CaptionOverlay.referenceShort)))

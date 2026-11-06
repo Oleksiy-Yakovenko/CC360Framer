@@ -210,12 +210,32 @@ final class PlayerModel: ObservableObject {
         }
     }
 
+    private func overlayPlan() -> OverlayPlan {
+        OverlayPlan(hasPlace: place != nil, showCard: cardOptions.show, cardFields: cardOptions.fields, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys,
+                    captions: captions, captionStyle: captionStyle)
+    }
+
+    /// Short side (pixels) of the preview the overlay bitmaps are rasterised for; set by the preview when its size settles.
+    private(set) var overlayTargetShort = 1080
+    let cardImages = CardImageCache()
+
+    func setOverlayTarget(short: Int) {
+        guard short > 0, short != overlayTargetShort else { return }
+        overlayTargetShort = short
+        rebuildOverlays()
+    }
+
+    /// Overlays rasterised for the export's output size (separate caches, so the preview's bitmaps stay as they are).
+    func exportOverlays(settings: ExportSettings) -> OverlayBundle {
+        let s = settings.outputSize
+        return OverlayBundle.make(place: place, plan: overlayPlan(), style: cardStyle, targetShort: OverlayScale.short(width: Double(s.width), height: Double(s.height)))
+    }
+
     /// Rebuilds the overlay bitmaps and the plan and hands them to the preview (the export reads `overlays` when it starts).
     func rebuildOverlays() {
         guard !loadingProject else { return }
-        let plan = OverlayPlan(hasPlace: place != nil, showCard: cardOptions.show, cardFields: cardOptions.fields, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys,
-                               captions: captions, captionStyle: captionStyle)
-        overlays = OverlayBundle.make(place: place, plan: plan, style: cardStyle, captionCache: captionImages)
+        overlays = OverlayBundle.make(place: place, plan: overlayPlan(), style: cardStyle, targetShort: overlayTargetShort,
+                                      cardCache: cardImages, captionCache: captionImages)
         onOverlays?(overlays)
         objectWillChange.send()   // the timeline bar enables Add once a place is known
     }
@@ -679,7 +699,7 @@ extension PlayerModel {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 await pending?.value   // make sure the location lookup has finished
-                let overlays = await MainActor.run { self?.overlays ?? .empty }
+                let overlays = await MainActor.run { self?.exportOverlays(settings: settings) ?? .empty }
                 try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
                                  audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
