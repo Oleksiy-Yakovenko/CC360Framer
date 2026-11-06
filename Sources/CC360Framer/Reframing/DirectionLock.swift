@@ -33,6 +33,12 @@ enum DirectionLock {
             lastDrag = nil
             return true
         }
+
+        /// True when a drag is still waiting to settle; consumes it (used to flush on close).
+        mutating func takePending() -> Bool {
+            defer { lastDrag = nil }
+            return lastDrag != nil
+        }
     }
 
     /// "Direction lock: forward is 35 deg right of the camera front."

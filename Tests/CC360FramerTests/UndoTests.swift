@@ -89,3 +89,77 @@ final class UndoTests: XCTestCase {
         XCTAssertTrue(model.undoManager === fallback)
     }
 }
+
+/// Documents are viewers whose edits go to the sidecars: they must never count as edited (no save prompt on close/quit).
+@MainActor
+final class DocumentNeverEditedTests: XCTestCase {
+    func testUndoRegistrationDoesNotMarkDocumentEdited() {
+        let doc = VideoDocument()
+        let m = doc.undoManager!
+        var value = 0
+        func set(_ v: Int) {
+            let old = value
+            value = v
+            m.registerUndo(withTarget: doc) { _ in set(old) }
+        }
+        m.beginUndoGrouping()
+        set(1)
+        m.endUndoGrouping()
+        XCTAssertFalse(doc.isDocumentEdited)
+        XCTAssertFalse(doc.hasUnautosavedChanges)
+        m.undo()
+        XCTAssertEqual(value, 0)
+        XCTAssertFalse(doc.isDocumentEdited)
+        m.redo()
+        XCTAssertEqual(value, 1)
+        XCTAssertFalse(doc.isDocumentEdited)
+        doc.updateChangeCount(.changeDone)
+        doc.updateChangeCount(.changeUndone)
+        XCTAssertFalse(doc.isDocumentEdited)
+        XCTAssertFalse(doc.hasUnautosavedChanges)
+    }
+
+    func testModelEditThroughDocumentManagerStaysClean() {
+        let doc = VideoDocument()
+        doc.model.setCardStyle(LocationCardStyle(baseSize: 77))
+        doc.undoManager!.undo()
+        XCTAssertFalse(doc.isDocumentEdited)
+    }
+
+    func testCanCloseWithoutAsking() {
+        final class Target: NSObject {
+            var answer: Bool?
+            @objc func document(_ d: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) { answer = shouldClose }
+        }
+        let doc = VideoDocument()
+        doc.updateChangeCount(.changeDone)
+        let t = Target()
+        doc.canClose(withDelegate: t, shouldClose: #selector(Target.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+        XCTAssertEqual(t.answer, true)
+    }
+
+    func testPendingDragIsFlushedOnClose() {
+        var s = DirectionLock.Settle()
+        XCTAssertFalse(s.takePending())
+        s.noteDrag(at: 1)
+        XCTAssertTrue(s.takePending())
+        XCTAssertFalse(s.takePending())
+    }
+
+    /// Undo and redo of a card style write the project sidecar again (the restore closure saves).
+    func testUndoRedoOfCardStyleIsSaved() throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("undo-save-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        let v = d.appendingPathComponent("a.360")
+        let model = PlayerModel()
+        model.setSourceURLForTesting(v)
+        let original = model.cardStyle
+        model.setCardStyle(LocationCardStyle(baseSize: 91))
+        XCTAssertEqual(ProjectSidecar.load(for: v).locationStyle?.baseSize, 91)
+        model.undoManager.undo()
+        XCTAssertEqual(ProjectSidecar.load(for: v).locationStyle, original)
+        model.undoManager.redo()
+        XCTAssertEqual(ProjectSidecar.load(for: v).locationStyle?.baseSize, 91)
+    }
+}

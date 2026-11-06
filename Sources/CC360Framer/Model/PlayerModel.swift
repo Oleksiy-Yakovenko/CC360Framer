@@ -390,6 +390,8 @@ final class PlayerModel: ObservableObject {
     private var sourceURL: URL?
     /// The file as opened (not resolved through symlinks).
     var documentURL: URL? { sourceURL }
+    /// Test hook: lets unit tests exercise the sidecar saves without opening media.
+    func setSourceURLForTesting(_ url: URL) { sourceURL = url }
     private var sourceAsset: AVURLAsset?
     private var sourceVideoTracks: [AVAssetTrack] = []
     var videoComposition: AVVideoComposition?
@@ -825,10 +827,22 @@ extension PlayerModel {
     }
 
     private func settleDirection() {
-        guard dragSettle.takeIfSettled(at: ProcessInfo.processInfo.systemUptime + 1e-3),
-              let yaw = DirectionLock.settledYaw(viewYaw: viewState.yaw, stored: lockedYaw) else { return }
+        guard dragSettle.takeIfSettled(at: ProcessInfo.processInfo.systemUptime + 1e-3) else { return }
+        commitSettledDirection()
+    }
+
+    private func commitSettledDirection() {
+        guard let yaw = DirectionLock.settledYaw(viewYaw: viewState.yaw, stored: lockedYaw) else { return }
         lockedYaw = yaw
         saveProject()
+    }
+
+    /// Writes what is still waiting on a timer (a running Record Camera gesture, a drag that has not settled yet) so
+    /// closing the document or quitting within a fraction of a second of an edit loses nothing.
+    func flushPendingSaves() {
+        if recording != nil { finishRecording() }
+        settleTask?.cancel(); settleTask = nil
+        if dragSettle.takePending() { commitSettledDirection() }
     }
 
     /// Ticking the lock keeps the view where it is; forward becomes the last direction the user set. Regenerates the Scenery path.

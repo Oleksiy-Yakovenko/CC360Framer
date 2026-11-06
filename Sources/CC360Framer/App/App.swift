@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillTerminate(_ notification: Notification) {
         for case let doc as VideoDocument in documents.documents {
             doc.documentWindowController?.saveState()
+            doc.model.flushPendingSaves()
             doc.model.cleanup()
         }
     }
