@@ -55,14 +55,14 @@ enum Detections {
     }
 
     struct Shape: Equatable {
-        enum Kind { case person, salient }
+        enum Kind { case person, salient, group }
         var kind: Kind
         /// 4 corners of the box, or a single point for detections stored without boxes.
         var points: [SIMD2<Float>]
         var isPoint: Bool { points.count == 1 }
     }
 
-    /// Screen shapes of every detection in `observation`. A box with any corner behind the camera is skipped.
+    /// Screen shapes of every detection in `observation` (persons, salient objects, then group boxes). A box with any corner behind the camera is skipped.
     static func shapes(for observation: Observation, camera: Camera) -> [Shape] {
         func shape(_ cand: Candidate, _ kind: Shape.Kind) -> Shape? {
             if let k = cand.corners, k.count == 8 {
@@ -76,6 +76,10 @@ enum Detections {
             guard let p = project(yaw: cand.yaw, pitch: cand.pitch, camera: camera) else { return nil }
             return Shape(kind: kind, points: [p])
         }
-        return observation.people.compactMap { shape($0, .person) } + observation.salient.compactMap { shape($0, .salient) }
+        // Display-time clean-up only: duplicates from overlapping views are merged, groups of people get one more box.
+        let people = DetectionGroups.merged(observation.people)
+        let groups = DetectionGroups.groups(people).map { Candidate(yaw: $0.yaw, pitch: $0.pitch, score: 1, corners: $0.corners) }
+        return people.compactMap { shape($0, .person) } + DetectionGroups.merged(observation.salient).compactMap { shape($0, .salient) }
+            + groups.compactMap { shape($0, .group) }
     }
 }

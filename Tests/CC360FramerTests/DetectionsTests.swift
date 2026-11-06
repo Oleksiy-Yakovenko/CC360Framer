@@ -101,3 +101,80 @@ final class DetectionsTests: XCTestCase {
         XCTAssertEqual(back.corners, c.corners)
     }
 }
+
+final class DetectionGroupsTests: XCTestCase {
+    /// Person box centred at (yaw, 0), `w` wide and `h` tall (radians).
+    private func p(_ yaw: Float, w: Float = 0.1, h: Float = 0.3, pitch: Float = 0, score: Float = 0.9) -> Candidate {
+        let l = yaw - w / 2, r = yaw + w / 2, b = pitch - h / 2, t = pitch + h / 2
+        return Candidate(yaw: yaw, pitch: pitch, score: score, corners: [l, b, r, b, r, t, l, t])
+    }
+    private func cam() -> Detections.Camera { .init(yaw: 0, pitch: 0, tanHalfFov: 1, aspect: 1) }
+
+    func testDuplicatesFromTwoViewsMerge() {
+        let m = DetectionGroups.merged([p(0.50, score: 0.6), p(0.51, w: 0.09, score: 0.8)])
+        XCTAssertEqual(m.count, 1)
+        XCTAssertEqual(m[0].score, 0.8)
+    }
+
+    func testAdjacentDifferentPeopleDoNotMerge() {
+        XCTAssertEqual(DetectionGroups.merged([p(0.0), p(0.12)]).count, 2)
+    }
+
+    func testMergeAcrossSeam() {
+        let a = p(.pi - 0.01), b = p(-.pi + 0.01)
+        XCTAssertEqual(DetectionGroups.merged([a, b]).count, 1)
+        XCTAssertEqual(DetectionGroups.merged([a, p(-.pi + 0.3)]).count, 2)
+    }
+
+    func testPersonAndSalientNotMerged() {
+        let o = Observation(t: 0, people: [p(0)], salient: [p(0)])
+        let s = Detections.shapes(for: o, camera: cam())
+        XCTAssertEqual(s.filter { $0.kind == .person }.count, 1)
+        XCTAssertEqual(s.filter { $0.kind == .salient }.count, 1)
+    }
+
+    func testLegacyUntouched() {
+        let l = Candidate(yaw: 0, pitch: 0, score: 1)
+        XCTAssertEqual(DetectionGroups.merged([l, l, p(0)]).count, 3)
+        XCTAssertTrue(DetectionGroups.groups([l, l, l]).isEmpty)
+    }
+
+    func testRowOfFiveMakesOneGroupCoveringAll() {
+        let people = (0..<5).map { p(Float($0) * 0.13) }
+        let g = DetectionGroups.groups(DetectionGroups.merged(people))
+        XCTAssertEqual(g.count, 1)
+        XCTAssertEqual(g[0].yaw - g[0].halfW, -0.05, accuracy: 1e-4)
+        XCTAssertEqual(g[0].yaw + g[0].halfW, 0.52 + 0.05, accuracy: 1e-4)
+        XCTAssertEqual(g[0].halfH, 0.15, accuracy: 1e-4)
+        let s = Detections.shapes(for: Observation(t: 0, people: people, salient: []), camera: cam())
+        XCTAssertEqual(s.filter { $0.kind == .person }.count, 5)
+        XCTAssertEqual(s.filter { $0.kind == .group }.count, 1)
+    }
+
+    func testTwoPeopleNoGroup() {
+        XCTAssertTrue(DetectionGroups.groups([p(0), p(0.13)]).isEmpty)
+    }
+
+    func testTwoFarClustersAndLoner() {
+        let a = (0..<3).map { p(Float($0) * 0.13) }
+        let b = (0..<4).map { p(1.5 + Float($0) * 0.13) }
+        let loner = p(0.9)
+        XCTAssertEqual(DetectionGroups.groups(a + b + [loner]).count, 2)
+        // The loner is not absorbed into the first group.
+        let g = DetectionGroups.groups(a + [loner])
+        XCTAssertEqual(g.count, 1)
+        XCTAssertLessThan(g[0].yaw + g[0].halfW, 0.5)
+    }
+
+    func testGroupAcrossSeam() {
+        let g = DetectionGroups.groups([p(.pi - 0.13), p(.pi), p(-.pi + 0.13)])
+        XCTAssertEqual(g.count, 1)
+        XCTAssertEqual(g[0].halfW, 0.18, accuracy: 1e-4)
+    }
+
+    func testGroupBehindCameraSkipped() {
+        let people = (0..<3).map { p(.pi + Float($0) * 0.13) }
+        let s = Detections.shapes(for: Observation(t: 0, people: people, salient: []), camera: cam())
+        XCTAssertTrue(s.isEmpty)
+    }
+}

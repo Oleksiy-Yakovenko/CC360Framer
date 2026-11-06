@@ -95,8 +95,10 @@ final class DetectionsOverlayView: NSView {
             CGPoint(x: (CGFloat(p.x) + 1) / 2 * bounds.width, y: (CGFloat(p.y) + 1) / 2 * bounds.height)
         }
         for s in shapes {
-            let color = s.kind == .person ? NSColor.systemGreen : NSColor.systemYellow
+            let color: NSColor = s.kind == .person ? .systemGreen : s.kind == .salient ? .systemYellow : .systemCyan
             ctx.setStrokeColor(color.cgColor)
+            ctx.setLineWidth(s.kind == .group ? 3 : 2)
+            ctx.setLineDash(phase: 0, lengths: s.kind == .group ? [8, 5] : [])
             if s.isPoint {
                 let c = screen(s.points[0])
                 ctx.move(to: CGPoint(x: c.x - 8, y: c.y)); ctx.addLine(to: CGPoint(x: c.x + 8, y: c.y))

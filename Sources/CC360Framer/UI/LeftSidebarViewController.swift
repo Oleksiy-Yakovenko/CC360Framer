@@ -35,7 +35,7 @@ final class LeftSidebarViewController: ModelViewController {
 
         detectionsCheck.target = self
         detectionsCheck.action = #selector(detectionsToggled)
-        detectionsCheck.toolTip = "Preview only: outline the people (green) and objects (yellow) found by the analysis at the nearest analysed frame (about 5 per second). Analyses made by older versions have no boxes: re-analyse to get them."
+        detectionsCheck.toolTip = "Preview only: outline the people (green) and objects (yellow) found by the analysis at the nearest analysed frame (about 5 per second). Duplicates seen in two overlapping analysis views are merged, and groups of 3 or more people get one extra cyan dashed box. Analyses made by older versions have no boxes: re-analyse to get them."
 
         let autoTitle = Kit.title("Auto", tip: "Follow the camera path: the view tracks the keyframes at the playhead.")
         let analysisTitle = Kit.title("Analysis", tip: "Detects people and objects; needed to build a camera path.")
