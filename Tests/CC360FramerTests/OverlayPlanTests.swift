@@ -95,4 +95,76 @@ final class OverlayPlanTests: XCTestCase {
         XCTAssertEqual(Set(b.images.keys), ["card.-1", "card.1"])
         XCTAssertTrue(OverlayBundle.make(place: nil, plan: plan, style: LocationCardStyle()).images.isEmpty)
     }
+
+    func testMasterSwitchOffHidesEverything() {
+        let info = PlaceInfo(latitude: 55, longitude: 12, country: "Denmark", city: "Copenhagen")
+        var plan = OverlayPlan(hasPlace: true, showCard: false, autoCard: true, autoPlacement: .topLeft, cardKeys: [key(5, .topLeft)])
+        XCTAssertTrue(plan.cardPlacements.isEmpty)
+        XCTAssertTrue(plan.draws(at: 6).isEmpty)
+        XCTAssertTrue(OverlayBundle.make(place: info, plan: plan, style: LocationCardStyle()).images.isEmpty)
+        plan.cardKeys = []
+        XCTAssertTrue(plan.draws(at: 1).isEmpty)
+        plan.showCard = true
+        XCTAssertEqual(plan.draws(at: 1).count, 1)
+    }
+
+    func testAllFieldsOffDrawsNoImage() {
+        let info = PlaceInfo(latitude: 55, longitude: 12, country: "Denmark", altitude: 5, city: "Copenhagen")
+        var f = LocationCardFields()
+        f.country = false; f.city = false; f.coordinates = false; f.elevation = false
+        XCTAssertNil(LocationOverlay.image(for: info, placement: .bottomLeft, fields: f))
+        XCTAssertNotNil(LocationOverlay.image(for: info, placement: .bottomLeft))
+    }
+
+    func testLinesDefaultsMatchOldCard() {
+        let old = PlaceInfo(latitude: 55.5, longitude: -12.25, country: "Denmark", place: "Nyhavn, Copenhagen", altitude: 5)
+        XCTAssertEqual(old.lines(), ["Denmark", "Nyhavn, Copenhagen", "55.50000° N, 12.25000° W", "5 m"])
+        XCTAssertEqual(old.cardLines().map(\.detail), [false, false, true, true])
+        XCTAssertEqual(LocationCardStyle().sizes(lineCount: 4), [64, 44, 34, 34])
+    }
+
+    func testLinesCombinations() {
+        let p = PlaceInfo(latitude: 1, longitude: 2, country: "DK", altitude: 7, city: "Town", street: "Main St", houseNumber: "12")
+        for bits in 0..<64 {
+            var f = LocationCardFields()
+            f.country = bits & 1 != 0; f.city = bits & 2 != 0; f.street = bits & 4 != 0
+            f.houseNumber = bits & 8 != 0; f.coordinates = bits & 16 != 0; f.elevation = bits & 32 != 0
+            var want: [String] = []
+            if f.country { want.append("DK") }
+            if f.street { want.append(f.houseNumber ? "Main St 12" : "Main St") }
+            if f.city { want.append("Town") }
+            if f.coordinates { want.append(p.coordinateText) }
+            if f.elevation { want.append("7 m") }
+            XCTAssertEqual(p.lines(f), want, "bits \(bits)")
+        }
+        // Defaults: street and house number off.
+        XCTAssertEqual(p.lines(), ["DK", "Town", p.coordinateText, "7 m"])
+        // Missing parts are skipped; a number without a street is not shown.
+        var f = LocationCardFields(); f.street = true; f.houseNumber = true
+        let q = PlaceInfo(latitude: 1, longitude: 2, houseNumber: "12")
+        XCTAssertEqual(q.lines(f), [q.coordinateText])
+    }
+
+    func testPlaceCodableAndStaleCache() throws {
+        let old = #"{"latitude":1,"longitude":2,"country":"DK","place":"Nyhavn, Town"}"#
+        let p = try JSONDecoder().decode(PlaceInfo.self, from: Data(old.utf8))
+        XCTAssertTrue(p.isStale)
+        XCTAssertNil(p.city)
+        let fresh = PlaceInfo(latitude: 1, longitude: 2, country: "DK", city: "Town", street: "Main St", houseNumber: "1")
+        XCTAssertFalse(fresh.isStale)
+        XCTAssertEqual(try JSONDecoder().decode(PlaceInfo.self, from: JSONEncoder().encode(fresh)), fresh)
+        XCTAssertFalse(PlaceInfo(latitude: 1, longitude: 2).isStale)
+    }
+
+    func testSidecarCardOptionsBackCompat() {
+        let old = ProjectSidecar.decode(Data(#"{"locationPlacement":"Centre"}"#.utf8))
+        XCTAssertNil(old?.showLocationCard)
+        XCTAssertNil(old?.locationFields)
+        var f = LocationCardFields(); f.street = true; f.country = false
+        let p = ProjectSidecar(showLocationCard: false, locationFields: f)
+        XCTAssertEqual(ProjectSidecar.decode(p.encoded()!), p)
+        let partial = ProjectSidecar.decode(Data(#"{"locationFields":{"street":true}}"#.utf8))
+        var want = LocationCardFields(); want.street = true
+        XCTAssertEqual(partial?.locationFields, want)
+    }
 }

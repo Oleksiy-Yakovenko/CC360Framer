@@ -114,6 +114,10 @@ struct OverlayPlan: Equatable {
 
     /// False when the file has no GPS place: no location card at all.
     var hasPlace = false
+    /// Master switch: false = no location card at all (automatic card and card keyframes).
+    var showCard = true
+    /// Which parts of the place the card shows.
+    var cardFields = LocationCardFields()
     var autoCard = true
     var autoPlacement: OverlayPlacement = .bottomLeft
     var cardKeys: [LocationCardKey] = []
@@ -128,13 +132,13 @@ struct OverlayPlan: Equatable {
 
     /// Placements the card can appear with (to know which bitmaps to build).
     var cardPlacements: [OverlayPlacement] {
-        guard hasPlace else { return [] }
+        guard hasPlace, showCard else { return [] }
         return cardKeys.isEmpty ? (autoCard ? [autoPlacement] : []) : cardKeys.map(\.placement)
     }
 
     func draws(at t: Double) -> [OverlayDraw] {
         var out: [OverlayDraw] = []
-        if hasPlace, let c = LocationCards.active(keys: cardKeys, autoEnabled: autoCard, autoPlacement: autoPlacement, at: t) {
+        if hasPlace, showCard, let c = LocationCards.active(keys: cardKeys, autoEnabled: autoCard, autoPlacement: autoPlacement, at: t) {
             out.append(OverlayDraw(key: Self.cardImageKey(c.placement), placement: c.placement, alpha: c.alpha, size: .fractionOfShort(0.4)))
         }
         for (c, alpha) in CaptionLogic.active(captions, at: t) {
@@ -156,7 +160,7 @@ struct OverlayBundle {
         var images: [String: CGImage] = [:]
         if let place {
             for p in plan.cardPlacements where images[OverlayPlan.cardImageKey(p)] == nil {
-                if let img = LocationOverlay.image(for: place, placement: p, style: style) { images[OverlayPlan.cardImageKey(p)] = img }
+                if let img = LocationOverlay.image(for: place, placement: p, style: style, fields: plan.cardFields) { images[OverlayPlan.cardImageKey(p)] = img }
             }
         }
         images.merge(captionCache.images(for: plan.captions, style: plan.captionStyle)) { a, _ in a }

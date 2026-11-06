@@ -188,10 +188,32 @@ final class PlayerModel: ObservableObject {
         cardUndo.register(before, name)
     }
 
+    /// Master switch and fields of the location card; per file, saved in the project sidecar.
+    struct CardOptions: Equatable { var show = true; var fields = LocationCardFields() }
+    @Published private(set) var cardOptions = CardOptions()
+    private(set) lazy var cardOptionsUndo = SnapshotUndo<CardOptions>(
+        manager: undo.manager,
+        capture: { [unowned self] in cardOptions },
+        restore: { [unowned self] s in
+            cardOptions = s
+            rebuildOverlays()
+            saveProject()
+        })
+
+    /// Changes the card master switch / fields (undoable, saved, preview and export update).
+    func setCardOptions(_ new: CardOptions, name: String = "Change Location Card Fields") {
+        guard new != cardOptions else { return }
+        cardOptionsUndo.perform(name) {
+            cardOptions = new
+            rebuildOverlays()
+            saveProject()
+        }
+    }
+
     /// Rebuilds the overlay bitmaps and the plan and hands them to the preview (the export reads `overlays` when it starts).
     func rebuildOverlays() {
         guard !loadingProject else { return }
-        let plan = OverlayPlan(hasPlace: place != nil, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys,
+        let plan = OverlayPlan(hasPlace: place != nil, showCard: cardOptions.show, cardFields: cardOptions.fields, autoCard: autoLocationCard, autoPlacement: overlayPlacement, cardKeys: cardKeys,
                                captions: captions, captionStyle: captionStyle)
         overlays = OverlayBundle.make(place: place, plan: plan, style: cardStyle, captionCache: captionImages)
         onOverlays?(overlays)
@@ -202,6 +224,7 @@ final class PlayerModel: ObservableObject {
         let proj = ProjectSidecar.load(for: url)
         loadingProject = true
         cardStyle = proj.locationStyle ?? LocationCardStyle()
+        cardOptions = CardOptions(show: proj.showLocationCard ?? true, fields: proj.locationFields ?? LocationCardFields())
         exportSettings = proj.exportSettings ?? ExportSettings.loadDefaults()
         globalFov = proj.globalFov ?? GlobalFov.loadDefaults()
         cuts = proj.cuts ?? []
@@ -226,6 +249,7 @@ final class PlayerModel: ObservableObject {
         ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov,
                        cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil,
                        locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false,
+                       showLocationCard: cardOptions.show ? nil : false, locationFields: cardOptions.fields == LocationCardFields() ? nil : cardOptions.fields,
                        captions: captions.isEmpty ? nil : captions, captionStyle: captionStyle).save(for: sourceURL)
     }
 
@@ -358,16 +382,12 @@ final class PlayerModel: ObservableObject {
         rebuildOverlays()
         guard let fix = telemetry?.gps else { placeTask = nil; return }
         placeTask = Task { [weak self] in
-            let info: PlaceInfo
-            if let cached = PlaceInfo.cached(for: url, matching: fix) {
-                info = cached.withAltitude(of: fix)
-                if info != cached { info.save(for: url) }   // refresh caches written before altitude existed
-            } else { info = await PlaceInfo.lookup(fix: fix, cacheFor: url) }
+            let info = await PlaceInfo.resolve(fix: fix, cacheFor: url)
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.place = info
             self.rebuildOverlays()
-            if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines.joined(separator: " | "))"); fflush(stdout) }
+            if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines(self.cardOptions.fields).joined(separator: " | "))"); fflush(stdout) }
         }
     }
 

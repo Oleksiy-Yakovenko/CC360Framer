@@ -188,9 +188,22 @@ final class LocationTabViewController: ModelViewController {
     private let strokeSlider = NSSlider(value: 0, minValue: 0, maxValue: 12, target: nil, action: nil)
     private var resetButton = NSButton()
     private var autoCheck = NSButton()
+    private var showCheck = NSButton()
+    private var fieldChecks: [(key: WritableKeyPath<LocationCardFields, Bool>, button: NSButton)] = []
 
     override func loadView() {
         view = NSView()
+        showCheck = NSButton(checkboxWithTitle: "Show location card", target: self, action: #selector(showToggled))
+        showCheck.toolTip = "Master switch: off hides the location card completely (automatic card and card keyframes, preview and export)."
+        let defs: [(String, WritableKeyPath<LocationCardFields, Bool>, String)] = [
+            ("Country", \.country, "Show the country"), ("City", \.city, "Show the city"),
+            ("Street", \.street, "Show the street (above the city)"), ("House number", \.houseNumber, "Show the house number after the street (needs Street)"),
+            ("Coordinates", \.coordinates, "Show latitude and longitude"), ("Elevation", \.elevation, "Show the elevation (when the GPS reports one)")]
+        fieldChecks = defs.map { title, key, tip in
+            let b = NSButton(checkboxWithTitle: title, target: self, action: #selector(fieldToggled))
+            b.toolTip = tip + ". Applies to all location cards."
+            return (key, b)
+        }
         autoCheck = NSButton(checkboxWithTitle: "Automatic card at start", target: self, action: #selector(autoToggled))
         autoCheck.toolTip = "Show the card for the first 10 s of the video when no card keyframes exist. As soon as you add cards on the Location cards timeline only those are shown (add one at 0 s to keep a card at the start)."
         placementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the automatic card (first 10 s) is placed, and the placement of newly added card keyframes. Each card keyframe keeps its own placement (Inspector tab).",
@@ -206,8 +219,10 @@ final class LocationTabViewController: ModelViewController {
         resetButton = Kit.button("Reset look", tip: "Back to the default font, size and colours", target: self, action: #selector(reset))
         Kit.sidebarStack(in: view, [
             Kit.title("Location card", tip: "Place-name card shown for 10 s, in preview and export: at the start of the video, or at the card keyframes of the Location cards timeline. The look below applies to all cards."),
+            showCheck,
             autoCheck,
             placementPopup,
+        ] + fieldChecks.map(\.button) + [
             Kit.labeledRow("Font", fontPopup),
             Kit.labeledRow("Size", sizeSlider, tip: "Size of the first line in points"),
             Kit.labeledRow("Colour", fillWell, tip: "Text colour"),
@@ -227,6 +242,22 @@ final class LocationTabViewController: ModelViewController {
         if strokeWell.color != s.stroke.nsColor { strokeWell.color = s.stroke.nsColor }
         resetButton.isEnabled = s != LocationCardStyle()
         autoCheck.state = model.autoLocationCard ? .on : .off
+        let o = model.cardOptions
+        showCheck.state = o.show ? .on : .off
+        for (key, b) in fieldChecks { b.state = o.fields[keyPath: key] ? .on : .off; b.isEnabled = o.show }
+        autoCheck.isEnabled = o.show
+    }
+
+    @objc private func showToggled() {
+        var o = model.cardOptions
+        o.show = showCheck.state == .on
+        model.setCardOptions(o, name: o.show ? "Show Location Card" : "Hide Location Card")
+    }
+
+    @objc private func fieldToggled() {
+        var o = model.cardOptions
+        for (key, b) in fieldChecks { o.fields[keyPath: key] = b.state == .on }
+        model.setCardOptions(o)
     }
 
     @objc private func autoToggled() { model.setAutoLocationCard(autoCheck.state == .on) }

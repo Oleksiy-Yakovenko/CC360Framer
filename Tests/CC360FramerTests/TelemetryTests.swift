@@ -72,10 +72,10 @@ final class TelemetryTests: XCTestCase {
         let old = #"{"latitude":55.6,"longitude":12.5,"country":"Denmark","place":"Nyhavn"}"#
         let p = try JSONDecoder().decode(PlaceInfo.self, from: Data(old.utf8))
         XCTAssertNil(p.altitude)
-        XCTAssertEqual(p.lines.count, 3)
+        XCTAssertEqual(p.lines().count, 3)
         let q = p.withAltitude(of: Telemetry.GPSFix(latitude: 55.6, longitude: 12.5, altitude: 41.6))
         XCTAssertEqual(q.altitudeText, "42 m")
-        XCTAssertEqual(q.lines.last, "42 m")
+        XCTAssertEqual(q.lines().last, "42 m")
         XCTAssertNotEqual(p, q)
     }
 }
