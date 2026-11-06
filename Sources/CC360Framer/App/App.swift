@@ -99,7 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         switch item.action {
         case #selector(deleteKey): return !typing && model?.timeline.canDelete == true
         case #selector(togglePlay), #selector(setKey): return !typing && (model?.duration ?? 0) > 0
-        case #selector(exportDocument): return (model?.duration ?? 0) > 0 || model?.exportProgress != nil
+        case #selector(exportDocument):
+            item.title = model?.exportProgress != nil ? "Cancel Export" : "Export…"
+            return (model?.duration ?? 0) > 0 || model?.exportProgress != nil
         default: return true
         }
     }
@@ -136,9 +138,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         recent.submenu = recentMenu
         file.addItem(recent)
         file.addItem(.separator())
-        add(file, "Export…", #selector(exportDocument), "e", target: self)
-        add(file, "Batch Processing…", #selector(showBatch), "b", [.command, .shift], target: self)
-        file.addItem(.separator())
         add(file, "Close", #selector(NSWindow.performClose(_:)), "w")
 
         let edit = submenu("Edit")
@@ -159,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(play, "Set Keyframe", #selector(setKey), "k", [], target: self)
         add(play, "Delete Selected", #selector(deleteKey), "\u{8}", [], target: self)
 
+        let actions = submenu("Actions")
+        add(actions, "Export…", #selector(exportDocument), "e", target: self)
+
         let windows = submenu("Window")
         add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         add(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
@@ -168,6 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         welcome.target = self
         windows.insertItem(welcome, at: 0)
         windows.insertItem(.separator(), at: 1)
+        windows.addItem(.separator())
+        add(windows, "Batch Processing…", #selector(showBatch), "b", [.command, .shift], target: self)
 
         NSApp.mainMenu = bar
     }

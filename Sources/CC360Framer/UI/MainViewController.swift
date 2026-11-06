@@ -162,8 +162,6 @@ enum SidebarLayout {
 private extension NSToolbarItem.Identifier {
     static let toggleLeft = NSToolbarItem.Identifier("toggleLeft")
     static let appTitle = NSToolbarItem.Identifier("appTitle")
-    static let export = NSToolbarItem.Identifier("export")
-    static let batch = NSToolbarItem.Identifier("batch")
     static let leftSeparator = NSToolbarItem.Identifier("leftSeparator")
     static let rightSeparator = NSToolbarItem.Identifier("rightSeparator")
     static let inspector = NSToolbarItem.Identifier("inspector")
@@ -177,7 +175,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     private let dropSplitView: DropSplitView
     private var leftItem: NSSplitViewItem?
     private var inspectorItem: NSSplitViewItem?
-    private var exportItem: NSToolbarItem?
+    private var titleLabel: NSTextField?
     private var bag = Set<AnyCancellable>()
     /// Called with every file dropped on the window; set by the window controller.
     var openURLs: (([URL]) -> Void)?
@@ -260,7 +258,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The tracking separators follow the split view dividers, so the items sit above the pane they belong to.
-        [.toggleLeft, .leftSeparator, .appTitle, .export, .batch, .flexibleSpace, .rightSeparator, .flexibleSpace, .inspector]
+        [.toggleLeft, .leftSeparator, .appTitle, .flexibleSpace, .rightSeparator, .flexibleSpace, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -278,15 +276,13 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
             return button(id, "Sidebar", "sidebar.left", "Show or hide the left sidebar", delegate, #selector(AppDelegate.toggleSidebar))
         case .appTitle:
             let item = NSToolbarItem(itemIdentifier: id)
-            item.view = Kit.title("CC360Framer")
+            let label = Kit.title(ToolbarTitle.text(appName: "CC360Framer", fileName: model.title))
+            label.lineBreakMode = .byTruncatingMiddle
+            label.maximumNumberOfLines = 1
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            titleLabel = label
+            item.view = label
             return item
-        case .export:
-            let item = button(id, "Export…", "arrowshape.up.fill", "Export the reframed video with the selected preset", delegate, #selector(AppDelegate.exportDocument))
-            exportItem = item
-            updateToolbar()
-            return item
-        case .batch:
-            return button(id, "Batch", "square.stack.3d.up", "Batch Processing", delegate, #selector(AppDelegate.showBatch))
         case .inspector:
             return button(id, "Inspector", "sidebar.right", "Show or hide the right sidebar", delegate, #selector(AppDelegate.toggleInspector))
         default:
@@ -306,20 +302,13 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         return item
     }
 
-    /// Export turns into Cancel while an export runs, and is disabled until a file is open.
+    /// Keeps the toolbar title ("CC360Framer - file") and the hidden window title current.
     private func updateToolbar() {
         if model.duration > 0 { view.window?.title = model.title }
-        guard let item = exportItem else { return }
-        if let p = model.exportProgress {
-            item.label = "Cancel"
-            item.image = Kit.symbol("xmark.circle", "Cancel export")
-            item.toolTip = "Cancel the export (\(Int(p * 100))%)"
-            item.isEnabled = true
-        } else {
-            item.label = "Export…"
-            item.image = Kit.symbol("arrowshape.up.fill", "Export")
-            item.toolTip = "Export the reframed video with the selected preset"
-            item.isEnabled = model.duration > 0
+        let text = ToolbarTitle.text(appName: "CC360Framer", fileName: model.duration > 0 ? model.title : nil)
+        if let label = titleLabel, label.stringValue != text {
+            label.stringValue = text
+            label.invalidateIntrinsicContentSize()
         }
     }
 }

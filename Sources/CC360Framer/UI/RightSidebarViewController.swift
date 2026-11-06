@@ -103,7 +103,7 @@ final class ExportTabViewController: ModelViewController {
         capStrokeRow.toolTip = capStrokeWidth.toolTip
         capReset = Kit.button("Reset captions look", tip: "Back to bottom centre, white text with a black outline", target: self, action: #selector(captionStyleReset))
         Kit.sidebarStack(in: view, [
-            Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
+            Kit.title("Export", tip: "Format and size used by the Actions > Export… (⌘E). Saved per video and as the default for new videos."),
             settingsView,
             Kit.grid([
                 Kit.checkRow(frameCheck),
