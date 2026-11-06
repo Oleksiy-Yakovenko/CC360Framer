@@ -7,17 +7,6 @@ APP=CC360Framer.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/release/CC360Framer "$APP/Contents/MacOS/"
-# SwiftPM records the deployment target (14.0) as the binary's SDK version. macOS only
-# enables the Liquid Glass look for binaries linked against SDK >= 26, so record the
-# installed SDK while keeping minos 14.0. Must happen before codesign.
-BIN="$APP/Contents/MacOS/CC360Framer"
-if SDKVER=$(xcrun --show-sdk-version 2>/dev/null) && [[ -n "$SDKVER" ]] \
-   && vtool -set-build-version macos 14.0 "$SDKVER" -replace -output "$BIN.tmp" "$BIN" >/dev/null 2>&1; then
-  mv "$BIN.tmp" "$BIN"
-else
-  rm -f "$BIN.tmp"
-  echo "Note: could not set the recorded SDK version (xcrun/vtool failed); binary left as built, the app will not get the new macOS look."
-fi
 # App icon: SwiftPM cannot compile Icon Composer .icon files, so actool does it here
 # (Assets.car for macOS 26+, AppIcon.icns fallback). Without it the app just has no icon.
 ICON="$PWD/Sources/CC360Framer/Assets/AppIcon.icon"  # absolute: actool resolves relative paths oddly
