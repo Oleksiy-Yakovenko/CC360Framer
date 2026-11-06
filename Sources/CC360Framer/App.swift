@@ -30,19 +30,49 @@ struct MetalView: NSViewRepresentable {
 
 struct ContentView: View {
     @ObservedObject var model: PlayerModel
+    @AppStorage("showRightSidebar") private var showRight = true
+    @State private var columns = NavigationSplitViewVisibility.all
+    @State private var preset = Exporter.Preset.all[0]
+    @State private var confirmReanalyse = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                MetalView(model: model)
-                if let err = model.errorText {
-                    Text(err).padding().background(.red.opacity(0.8)).foregroundStyle(.white).cornerRadius(8)
+        NavigationSplitView(columnVisibility: $columns) {
+            leftSidebar.navigationSplitViewColumnWidth(230)
+        } detail: {
+            VStack(spacing: 0) {
+                ZStack {
+                    MetalView(model: model)
+                    if let err = model.errorText {
+                        Text(err).padding().background(.red.opacity(0.8)).foregroundStyle(.white).cornerRadius(8)
+                    }
+                }
+                .frame(minHeight: 300)
+                controls.padding(10)
+            }
+            .inspector(isPresented: $showRight) {
+                rightSidebar.inspectorColumnWidth(200)
+            }
+            .navigationTitle("")
+            .toolbar {
+                ToolbarItemGroup(placement: .navigation) {
+                    Text("CC360Framer").font(.headline)
+                    Button { openPanel() } label: { Label("Open…", systemImage: "folder") }
+                        .help("Open a .360 file")
+                    if let p = model.exportProgress {
+                        ProgressView(value: p).frame(width: 90)
+                        Button("Cancel") { model.cancelJob() }
+                    } else {
+                        Button { exportPanel() } label: { Label("Export…", systemImage: "arrowshape.up.fill") }
+                            .disabled(model.duration == 0).help("Export the reframed video with the selected preset")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showRight.toggle() } label: { Image(systemName: "sidebar.right") }
+                        .help("Show or hide the right sidebar").keyboardShortcut("2", modifiers: [.command, .option])
                 }
             }
-            .frame(minHeight: 300)
-            controls.padding(10)
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 900, minHeight: 520)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             guard let p = providers.first else { return false }
             _ = p.loadObject(ofClass: URL.self) { url, _ in
@@ -52,8 +82,80 @@ struct ContentView: View {
         }
     }
 
-    @State private var preset = Exporter.Preset.all[0]
-    @State private var confirmReanalyse = false
+    /// A control with a title and a one-line explanation of what it does.
+    func field<C: View>(_ title: String, _ detail: String, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.headline)
+            Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            content()
+        }
+    }
+
+    var leftSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                field("Auto", "Follow the camera path: the view tracks the keyframes at the playhead.") {
+                    Toggle("Auto", isOn: Binding(get: { model.autoFollow }, set: { model.autoFollow = $0 && !model.keyframes.isEmpty }))
+                        .toggleStyle(.button).disabled(model.keyframes.isEmpty)
+                        .help("Follow the camera path. While on, the view tracks the keyframes at the playhead; dragging the view switches it off.")
+                }
+                field("Analysis", "Detects people and objects; needed to build a camera path.") {
+                    if let p = model.analysisProgress {
+                        HStack {
+                            ProgressView(value: p)
+                            Button("Cancel") { model.cancelJob() }
+                        }
+                    } else if model.observations.isEmpty {
+                        Button("Analyse") { model.analyze() }.help("Detect people and objects, then build a camera path")
+                    } else {
+                        HStack {
+                            Button("Build path") { model.buildPath() }.help("Regenerate the path in this style (replaces keyframes)")
+                            Button("Re-analyse") { confirmReanalyse = true }
+                                .confirmationDialog("Re-run the analysis?", isPresented: $confirmReanalyse) {
+                                    Button("Re-analyse", role: .destructive) { model.analyze() }
+                                    Button("Cancel", role: .cancel) {}
+                                } message: {
+                                    Text("This takes several minutes and replaces the current detections and keyframes.")
+                                }
+                        }
+                    }
+                }
+                field("Camera path", "How the path is generated from the detections.") {
+                    Picker("", selection: Binding(get: { model.style }, set: { model.style = $0; model.styleChanged() })) {
+                        ForEach(PathStyle.allCases) { Text($0.rawValue).tag($0) }
+                    }.labelsHidden().help("How the camera path is generated")
+                }
+                field("Stabilise", "Horizon lock and shake removal from the camera's motion data.") {
+                    Picker("", selection: Binding(get: { model.stabilization }, set: { model.stabilization = $0; model.stabilizationChanged() })) {
+                        ForEach(StabilizeMode.allCases) { Text($0.rawValue).tag($0) }
+                    }.labelsHidden().help("Horizon lock and shake removal from the camera's motion data")
+                }
+                field("Location card", "Where the place-name card (first 10 s) is placed, in preview and export.") {
+                    Picker("", selection: $model.overlayPlacement) {
+                        ForEach(OverlayPlacement.allCases) { Text($0.rawValue).tag($0) }
+                    }.labelsHidden().help("Where the location card (first 10 s) is placed, in preview and export")
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 230)
+    }
+
+    var rightSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                field("Export preset", "Resolution and format used by the Export button in the toolbar.") {
+                    Picker("", selection: $preset) {
+                        ForEach(Exporter.Preset.all, id: \.self) { Text($0.name).tag($0) }
+                    }.labelsHidden()
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 200)
+    }
 
     var controls: some View {
         VStack(spacing: 6) {
@@ -74,52 +176,17 @@ struct ContentView: View {
                 Text(format(model.duration)).monospacedDigit()
             }
             HStack {
-                Toggle("Auto", isOn: Binding(get: { model.autoFollow }, set: { model.autoFollow = $0 && !model.keyframes.isEmpty }))
-                    .toggleStyle(.button).disabled(model.keyframes.isEmpty)
-                    .help("Follow the camera path")
-                Picker("", selection: Binding(get: { model.style }, set: { model.style = $0; model.styleChanged() })) {
-                    ForEach(PathStyle.allCases) { Text($0.rawValue).tag($0) }
-                }.labelsHidden().frame(width: 150).help("How the camera path is generated")
-                Picker("", selection: Binding(get: { model.stabilization }, set: { model.stabilization = $0; model.stabilizationChanged() })) {
-                    ForEach(StabilizeMode.allCases) { Text("Stabilise: \($0.rawValue)").tag($0) }
-                }.labelsHidden().frame(width: 190).help("Horizon lock and shake removal from the camera's motion data")
-                Picker("", selection: $model.overlayPlacement) {
-                    ForEach(OverlayPlacement.allCases) { Text("Location: \($0.rawValue)").tag($0) }
-                }.labelsHidden().frame(width: 190).help("Where the location card (first 10 s) is placed, in preview and export")
-                if let p = model.analysisProgress {
-                    ProgressView(value: p).frame(width: 90)
-                    Button("Cancel") { model.cancelJob() }
-                } else if model.observations.isEmpty {
-                    Button("Analyse") { model.analyze() }.help("Detect people and objects, then build a camera path")
-                } else {
-                    Button("Build path") { model.buildPath() }.help("Regenerate the path in this style (replaces keyframes)")
-                    Button("Re-analyse") { confirmReanalyse = true }
-                        .confirmationDialog("Re-run the analysis?", isPresented: $confirmReanalyse) {
-                            Button("Re-analyse", role: .destructive) { model.analyze() }
-                            Button("Cancel", role: .cancel) {}
-                        } message: {
-                            Text("This takes several minutes and replaces the current detections and keyframes.")
-                        }
-                }
+                Button { jumpKey(forward: false) } label: { Image(systemName: "backward.end.fill") }
+                    .disabled(model.keyframes.isEmpty).help("Previous keyframe")
+                Button { jumpKey(forward: true) } label: { Image(systemName: "forward.end.fill") }
+                    .disabled(model.keyframes.isEmpty).help("Next keyframe")
                 Button("Set key") { model.setKey() }.keyboardShortcut("k", modifiers: [])
                     .help("Keyframe the current view at the playhead (K)")
                 Button("Delete key") { model.deleteSelectedKey() }.disabled(model.selectedKey == nil)
                     .keyboardShortcut(.delete, modifiers: [])
+                    .help("Delete the selected keyframe")
                 Button("Clear keys") { model.clearKeys() }.disabled(model.keyframes.isEmpty)
-                Spacer()
-                if let p = model.exportProgress {
-                    ProgressView(value: p).frame(width: 90)
-                    Button("Cancel") { model.cancelJob() }
-                } else {
-                    Picker("", selection: $preset) {
-                        ForEach(Exporter.Preset.all, id: \.self) { Text($0.name).tag($0) }
-                    }.labelsHidden().frame(width: 140)
-                    Button("Export…") { exportPanel() }.disabled(model.duration == 0)
-                }
-            }
-            HStack {
-                Button("Open…") { openPanel() }
-                Text(model.statusText ?? model.title).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                    .help("Remove all keyframes")
                 Spacer()
                 if !model.audioOptions.isEmpty {
                     Image(systemName: "speaker.wave.2")
@@ -130,6 +197,14 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// Jumps to the nearest keyframe before or after the playhead.
+    func jumpKey(forward: Bool) {
+        let t = model.position
+        let target = forward ? model.keyframes.first { $0.time > t + 0.15 }
+                             : model.keyframes.last { $0.time < t - 0.15 }
+        if let target { model.select(target) }
     }
 
     /// Keyframe markers aligned under the seekbar; click one to select it and jump there.
