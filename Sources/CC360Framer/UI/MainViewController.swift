@@ -47,13 +47,18 @@ final class CenterViewController: NSViewController {
             v.setContentHuggingPriority(.required, for: .vertical)
             v.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        view = stack
+        // Container that owns a black backdrop and pins the stack to its real edges (not the safe area), so the
+        // preview runs underneath the transparent unified toolbar instead of leaving window-gray strip above it.
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.black.cgColor
+        Kit.pin(stack, to: container)
+        view = container
     }
 }
 
 private extension NSToolbarItem.Identifier {
     static let appTitle = NSToolbarItem.Identifier("appTitle")
-    static let open = NSToolbarItem.Identifier("open")
     static let export = NSToolbarItem.Identifier("export")
     static let inspectorSeparator = NSToolbarItem.Identifier("inspectorSeparator")
     static let inspector = NSToolbarItem.Identifier("inspector")
@@ -121,7 +126,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The separators follow the split view dividers, so the items sit above the pane they belong to.
-        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .open, .export, .flexibleSpace, .inspectorSeparator, .inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .flexibleSpace, .inspectorSeparator, .flexibleSpace, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -135,8 +140,6 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: id)
             item.view = Kit.title("CC360Framer")
             return item
-        case .open:
-            return button(id, "Open…", "folder", "Open a .360 file", delegate, #selector(AppDelegate.openDocument))
         case .export:
             let item = button(id, "Export…", "arrowshape.up.fill", "Export the reframed video with the selected preset", delegate, #selector(AppDelegate.exportDocument))
             exportItem = item
