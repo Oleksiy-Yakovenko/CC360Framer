@@ -21,7 +21,7 @@ Xcode:
 
 ## Using the app
 
-- **Open:** File > Open, drag a `.360` onto the window, or pass it as an argument.
+- **Open:** File > Open (multiple files allowed), drag one or more `.360` files onto a window, double-click a `.360` once the app is built with `build.sh` (it declares the type), or pass one as an argument. Every file opens in its own window with its own settings; opening a file that is already open just brings its window forward, and an empty window is reused first. Menu items and shortcuts act on the front window.
 - **Look:** drag to look around, scroll/pinch to zoom, double-click to reset. Audio tracks are toggled individually in the right sidebar's Audio tab.
 - **Analyse:** projects 8 views around the horizon, detects people and (on the side views) salient objects, and stores the raw detections next to the video (`CC360Framer.sidecars/<file>.analysis.json`). A path style turns them into a smoothed camera path of editable keyframes (diamonds under the seekbar), saved as `CC360Framer.sidecars/<file>.reframe.json`. Sidecars live in a `CC360Framer.sidecars` folder created next to the video on first save; sidecars from older versions next to the video are still read (never written). Re-analyse asks for confirmation because it takes minutes.
 - **Style** (drop-down, remembered between launches): *Follow subject* keeps the main subject (the rider) in view. *Scenery + rider* looks forward along the direction of travel and glances at objects on the sides. The rider is shown rarely: at most twice per clip, at least a minute apart, and only when nothing else is interesting. Switching style regenerates the path from the stored detections without re-analysing (it asks first if you have hand-edited keyframes: use **Build path**).
@@ -41,4 +41,5 @@ Limits: rotation compensation cannot remove shake caused by camera translation (
 - `--stab-test file.360 [start] [length]`: measure residual shake per stabilisation mode and the telemetry/video time offset (env `CC360_SIGMAS`, `CC360_SCAN`, `CC360_W`).
 - `--analysis-compare file.360 [start] [length]`: compare analysis on the raw versus level frame.
 - `CC360_BATCH=out.mp4` with a file argument: headless analyse (or build from cached analysis) and export. Add `CC360_STYLE=scenery` for the scenery style, `CC360_NO_ANALYSIS=1` for a plain stabilised export without keyframes.
+- `CC360_FORCE_SYMLINK=1` opens `.360` files through a temporary `.mp4` symlink instead of directly (the fallback path).
 - `CC360_DEBUG=1` autoplays and logs frame rate; `CC360_PACING=sec` reports frame pacing then exits (`CC360_NOPLAY=1` skips play); `CC360_NOBLIT=1` skips compositor blits.

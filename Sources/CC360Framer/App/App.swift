@@ -1,20 +1,25 @@
 import AppKit
 import UniformTypeIdentifiers
 
+/// One window with its own `PlayerModel`: one per opened file.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
-    let model = PlayerModel()
-    private var window: NSWindow!
-    private var main: MainViewController!
+final class DocumentWindowController: NSWindowController, NSWindowDelegate {
+    let model: PlayerModel
+    let main: MainViewController
+    /// The file this window was asked to open (set before loading finishes, so it counts as taken immediately).
+    private(set) var openedURL: URL?
+    var isEmpty: Bool { openedURL == nil }
+    var onClose: ((DocumentWindowController) -> Void)?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        buildMenu()
-
-        main = MainViewController(model: model)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
+    init(autosave: Bool, cascadeFrom ref: NSWindow?) {
+        let model = PlayerModel()
+        let main = MainViewController(model: model)
+        self.model = model
+        self.main = main
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        super.init(window: window)
         window.isReleasedWhenClosed = false
         window.contentViewController = main
         window.delegate = self
@@ -24,39 +29,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.toolbar = main.makeToolbar()
-        if !window.setFrameUsingName("MainWindow") { window.center() }
-        window.setFrameAutosaveName("MainWindow")
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        // First non-flag argument is a file to open on launch.
-        if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
-            Task { await model.open(URL(fileURLWithPath: path)) }
+        if autosave {
+            if !window.setFrameUsingName("MainWindow") { window.center() }
+            window.setFrameAutosaveName("MainWindow")
+        } else if let ref {
+            window.setFrame(ref.frame, display: false)
+            window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: ref.frame.minX, y: ref.frame.maxY)))
+        } else {
+            window.center()
         }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func open(_ url: URL) {
+        openedURL = url
+        Task { await model.open(url) }
     }
 
     /// Edit > Undo/Redo and the text fields' field editor all use the model's undo manager.
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ notification: Notification) { model.cleanup() }
+    func windowWillClose(_ notification: Notification) {
+        model.cancelJob()
+        model.cleanup()
+        onClose?(self)
+    }
+}
 
-    func application(_ application: NSApplication, open urls: [URL]) {
-        if let url = urls.first { Task { await model.open(url) } }
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    private var controllers: [DocumentWindowController] = []
+
+    /// The window menu actions apply to: the key window's, else the main window's, else the newest.
+    private var current: DocumentWindowController? {
+        controllers.first { $0.window === NSApp.keyWindow } ?? controllers.first { $0.window === NSApp.mainWindow } ?? controllers.last
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        buildMenu()
+        let first = makeWindow()
+        first.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // First non-flag argument is a file to open on launch (CLI and headless modes use one file).
+        if let path = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) {
+            open(urls: [URL(fileURLWithPath: path)])
+        }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationWillTerminate(_ notification: Notification) { controllers.forEach { $0.model.cleanup() } }
+
+    func application(_ application: NSApplication, open urls: [URL]) { open(urls: urls) }
+
+    private func makeWindow() -> DocumentWindowController {
+        let c = DocumentWindowController(autosave: controllers.isEmpty, cascadeFrom: current?.window)
+        c.onClose = { [weak self] closed in self?.controllers.removeAll { $0 === closed } }
+        c.main.openURLs = { [weak self] urls in self?.open(urls: urls) }
+        controllers.append(c)
+        return c
+    }
+
+    /// One window per file: an empty window is reused first, a file that is already open is just brought forward.
+    func open(urls: [URL]) {
+        for url in urls {
+            let std = url.standardizedFileURL
+            if let existing = controllers.first(where: { $0.openedURL?.standardizedFileURL == std }) {
+                existing.showWindow(nil)
+                continue
+            }
+            let target = (current?.isEmpty == true ? current : nil) ?? controllers.first { $0.isEmpty } ?? makeWindow()
+            target.open(url)
+            target.showWindow(nil)
+        }
     }
 
     // MARK: Actions (menu and toolbar)
 
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "360") ?? .movie, .movie, .mpeg4Movie]
-        panel.allowsOtherFileTypes = true
-        if panel.runModal() == .OK, let url = panel.url {
-            Task { await model.open(url) }
-        }
+        // `.360` has no system type unless the app bundle declares one, so accept any file.
+        panel.allowedContentTypes = [.movie, .data]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK { open(urls: panel.urls) }
     }
 
     @objc func exportDocument(_ sender: Any?) {
+        guard let model = current?.model else { return }
         if model.exportProgress != nil { model.cancelJob(); return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
@@ -64,19 +126,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if panel.runModal() == .OK, let url = panel.url { model.export(preset: model.exportPreset, to: url) }
     }
 
-    @objc func toggleSidebar(_ sender: Any?) { main.toggleSidebar(sender) }
-    @objc func toggleInspector(_ sender: Any?) { main.toggleInspector() }
-    @objc func togglePlay(_ sender: Any?) { model.togglePlay() }
-    @objc func setKey(_ sender: Any?) { model.setKey() }
-    @objc func deleteKey(_ sender: Any?) { main.center.keyframes.confirmDeleteKey() }
+    @objc func toggleSidebar(_ sender: Any?) { current?.main.toggleSidebar(sender) }
+    @objc func toggleInspector(_ sender: Any?) { current?.main.toggleInspector() }
+    @objc func togglePlay(_ sender: Any?) { current?.model.togglePlay() }
+    @objc func setKey(_ sender: Any?) { current?.model.setKey() }
+    @objc func deleteKey(_ sender: Any?) { current?.main.center.keyframes.confirmDeleteKey() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Unmodified Space / K / Delete must reach a text field being edited instead.
         let typing = NSApp.keyWindow?.firstResponder is NSText
+        let model = current?.model
         switch item.action {
-        case #selector(deleteKey): return !typing && model.selectedKey != nil
-        case #selector(togglePlay), #selector(setKey): return !typing && model.duration > 0
-        case #selector(exportDocument): return model.duration > 0 || model.exportProgress != nil
+        case #selector(deleteKey): return !typing && model?.selectedKey != nil
+        case #selector(togglePlay), #selector(setKey): return !typing && (model?.duration ?? 0) > 0
+        case #selector(exportDocument): return (model?.duration ?? 0) > 0 || model?.exportProgress != nil
         default: return true
         }
     }

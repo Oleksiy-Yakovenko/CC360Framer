@@ -3,7 +3,7 @@ import Combine
 
 /// Split view that accepts a dropped video file.
 final class DropSplitView: NSSplitView {
-    var onDrop: ((URL) -> Void)?
+    var onDrop: (([URL]) -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -13,8 +13,9 @@ final class DropSplitView: NSSplitView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let url = (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first else { return false }
-        onDrop?(url)
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        onDrop?(urls)
         return true
     }
 }
@@ -65,6 +66,8 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
     private let inspectorItem: NSSplitViewItem
     private var exportItem: NSToolbarItem?
     private var bag = Set<AnyCancellable>()
+    /// Called with every file dropped on the window; set by the window controller.
+    var openURLs: (([URL]) -> Void)?
 
     init(model: PlayerModel) {
         self.model = model
@@ -82,7 +85,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         split.isVertical = true
         split.dividerStyle = .thin
         split.autosaveName = "MainSplit"
-        split.onDrop = { url in Task { @MainActor in await model.open(url) } }
+        split.onDrop = { [weak self] urls in self?.openURLs?(urls) }
         splitView = split
         addSplitViewItem(left)
         addSplitViewItem(middle)
@@ -162,6 +165,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     /// Export turns into Cancel while an export runs, and is disabled until a file is open.
     private func updateToolbar() {
+        if model.duration > 0 { view.window?.title = model.title }
         guard let item = exportItem else { return }
         if let p = model.exportProgress {
             item.label = "Cancel"

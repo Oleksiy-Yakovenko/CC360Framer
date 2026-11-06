@@ -190,10 +190,7 @@ final class PlayerModel: ObservableObject {
             errorText = nil
             player.pause()
             isPlaying = false
-            // AVFoundation refuses the .360 extension but reads the container fine as .mp4.
-            let playURL = try playableURL(url)
-            let asset = AVURLAsset(url: playURL)
-            let (tracks, duration) = try await asset.load(.tracks, .duration)
+            let (asset, tracks, duration) = try await loadAsset(url)
             let videos = tracks.filter { $0.mediaType == .video }
             guard videos.count == 2 else {
                 throw NSError(domain: "CC360Framer", code: 2, userInfo: [NSLocalizedDescriptionKey:
@@ -306,20 +303,47 @@ final class PlayerModel: ObservableObject {
         }
     }
 
+    /// Opens the container. AVFoundation rejects the `.360` extension, but it is plain MP4: first try the file directly
+    /// with the MIME type forced to `video/mp4` (no temporary files); if that fails, open it through a temporary
+    /// `.mp4` symlink in a per-model directory. `CC360_FORCE_SYMLINK=1` skips the direct attempt.
+    private func loadAsset(_ url: URL) async throws -> (AVURLAsset, [AVAssetTrack], CMTime) {
+        if url.pathExtension.lowercased() == "360" {
+            if ProcessInfo.processInfo.environment["CC360_FORCE_SYMLINK"] == nil {
+                let direct = AVURLAsset(url: url, options: [AVURLAssetOverrideMIMETypeKey: "video/mp4"])
+                if let tracks = try? await direct.load(.tracks), tracks.contains(where: { $0.mediaType == .video }),
+                   let duration = try? await direct.load(.duration) {
+                    removeTempDir()
+                    return (direct, tracks, duration)
+                }
+            }
+            let asset = AVURLAsset(url: try playableURL(url))
+            let (tracks, duration) = try await asset.load(.tracks, .duration)
+            return (asset, tracks, duration)
+        }
+        removeTempDir()
+        let asset = AVURLAsset(url: url)
+        let (tracks, duration) = try await asset.load(.tracks, .duration)
+        return (asset, tracks, duration)
+    }
+
+    /// Symlink fallback; the directory is unique per model so several windows never share or delete each other's links.
     private func playableURL(_ url: URL) throws -> URL {
-        if url.pathExtension.lowercased() != "360" { return url }
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("CC360Framer-\(ProcessInfo.processInfo.processIdentifier)")
+        removeTempDir()
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CC360Framer-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         tempDir = dir
         let link = dir.appendingPathComponent(url.deletingPathExtension().lastPathComponent + ".mp4")
-        try? FileManager.default.removeItem(at: link)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
         return link
     }
 
-    func cleanup() {
+    private func removeTempDir() {
         if let tempDir { try? FileManager.default.removeItem(at: tempDir) }
+        tempDir = nil
     }
+
+    func cleanup() { removeTempDir() }
 
     private static func describe(_ desc: CMFormatDescription?, index: Int) -> String {
         guard let desc, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee else {
