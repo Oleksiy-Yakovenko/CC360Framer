@@ -15,8 +15,7 @@ final class RightSidebarViewController: ModelViewController {
         progressBar.maxValue = 1
         progressBar.isHidden = true
         Kit.sidebarStack(in: view, [
-            Kit.title("Export preset"),
-            Kit.caption("Resolution and format used by the Export button in the toolbar."),
+            Kit.title("Export preset", tip: "Resolution and format used by the Export button in the toolbar."),
             presetPopup,
             progressBar,
         ])

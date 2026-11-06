@@ -36,6 +36,11 @@ Sidecars next to the video: `<file>.analysis.json` (raw detections), `<file>.ref
 - Telemetry: `CORI` orientation quaternion, `GRAV` gravity, `IORI` roll-only image orientation (applied forward). Fov is vertical, default 70°.
 - Remaining ~0.7° wobble at 0.5-2 Hz is translation parallax; rotation cannot remove it.
 
+## UI conventions
+- No subtitle/caption labels in the sidebars. Explanations go in the tooltip (`toolTip`) of the title label (`Kit.title(_, tip:)`) or of the control.
+- Build controls with the `Kit` helpers in `ViewKit.swift` (labeled rows, colour well, font popup, `TabContainer`).
+- Destructive actions (clear, delete) ask for confirmation with an `NSAlert` and are undoable through `PlayerModel.undoManager`.
+
 ## Tests
 XCTest target `Tests/CC360FramerTests` (`@testable import CC360Framer`), run with `swift test`. It covers the pure logic: `CameraPath`/`PathBuilder`, `PathStyle`/`SceneryPlanner`, `Stabilizer`/`Gaussian`, overlay alpha/placement.
 - **Add test coverage for every piece of new or changed logic** (anything not tied to Metal, AVFoundation or UI), in the matching `*Tests.swift` file. Fix bugs with a regression test.

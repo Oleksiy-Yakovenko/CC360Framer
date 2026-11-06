@@ -34,20 +34,18 @@ final class LeftSidebarViewController: ModelViewController {
         stabilizePopup = Kit.popup(StabilizeMode.allCases.map(\.rawValue), tip: "Horizon lock and shake removal from the camera's motion data", target: self, action: #selector(stabilizeChosen))
         locationPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the location card (first 10 s) is placed, in preview and export", target: self, action: #selector(locationChosen))
 
-        let autoTitle = Kit.title("Auto")
-        let analysisTitle = Kit.title("Analysis")
-        let pathTitle = Kit.title("Camera path")
-        let stabTitle = Kit.title("Stabilise")
-        let locTitle = Kit.title("Location card")
-        let autoCaption = Kit.caption("Follow the camera path: the view tracks the keyframes at the playhead.")
-        let analysisCaption = Kit.caption("Detects people and objects; needed to build a camera path.")
+        let autoTitle = Kit.title("Auto", tip: "Follow the camera path: the view tracks the keyframes at the playhead.")
+        let analysisTitle = Kit.title("Analysis", tip: "Detects people and objects; needed to build a camera path.")
+        let pathTitle = Kit.title("Camera path", tip: "How the path is generated from the detections.")
+        let stabTitle = Kit.title("Stabilise", tip: "Horizon lock and shake removal from the camera's motion data.")
+        let locTitle = Kit.title("Location card", tip: "Where the place-name card (first 10 s) is placed, in preview and export.")
 
         let stack = Kit.sidebarStack(in: view, [
-            autoTitle, autoCaption, autoButton,
-            analysisTitle, analysisCaption, progress, cancelButton, analyseButton, buildButton, reanalyseButton,
-            pathTitle, Kit.caption("How the path is generated from the detections."), stylePopup,
-            stabTitle, Kit.caption("Horizon lock and shake removal from the camera's motion data."), stabilizePopup,
-            locTitle, Kit.caption("Where the place-name card (first 10 s) is placed, in preview and export."), locationPopup,
+            autoTitle, autoButton,
+            analysisTitle, progress, cancelButton, analyseButton, buildButton, reanalyseButton,
+            pathTitle, stylePopup,
+            stabTitle, stabilizePopup,
+            locTitle, locationPopup,
         ])
         for v in [autoButton, reanalyseButton, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
         stack.setCustomSpacing(18, after: analyseButton)
