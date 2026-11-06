@@ -6,6 +6,7 @@ struct ProjectSidecar: Codable, Equatable {
     var locationStyle: LocationCardStyle?
     var locationPlacement: OverlayPlacement?
     var exportSettings: ExportSettings?
+    var globalFov: GlobalFov?
 
     static let kind = "project"
 

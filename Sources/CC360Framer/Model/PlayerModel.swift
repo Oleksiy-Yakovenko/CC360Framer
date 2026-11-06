@@ -76,6 +76,15 @@ final class PlayerModel: ObservableObject {
             saveProject()
         }
     }
+    /// Replaces the fov of every keyframe (preview, export, batch) while enabled. Default in UserDefaults, per file in the project sidecar.
+    @Published var globalFov = GlobalFov.loadDefaults() {
+        didSet {
+            viewState.fovLocked = globalFov.enabled
+            guard globalFov != oldValue, !loadingProject else { return }
+            globalFov.saveDefaults()
+            saveProject()
+        }
+    }
     /// Preview only: outline the export aspect in the player (not saved).
     @Published var showExportFrame = false { didSet { viewState.exportFrameAspect = showExportFrame ? exportSettings.aspectValue : nil } }
     private var telemetry: Telemetry?
@@ -132,6 +141,7 @@ final class PlayerModel: ObservableObject {
         loadingProject = true
         cardStyle = proj.locationStyle ?? LocationCardStyle()
         exportSettings = proj.exportSettings ?? ExportSettings.loadDefaults()
+        globalFov = proj.globalFov ?? GlobalFov.loadDefaults()
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
             ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft
@@ -141,7 +151,7 @@ final class PlayerModel: ObservableObject {
 
     func saveProject() {
         guard !loadingProject, let sourceURL else { return }
-        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings).save(for: sourceURL)
+        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement, exportSettings: exportSettings, globalFov: globalFov).save(for: sourceURL)
     }
 
     var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }
@@ -459,10 +469,15 @@ extension PlayerModel {
 
     /// Called every draw: while following, the view tracks the camera path at the playhead.
     func applyPath() {
-        guard autoFollow, let cam = path.sample(at: player.currentTime().seconds) else { return }
-        viewState.yaw = cam.yaw
-        viewState.pitch = cam.pitch
-        viewState.fovDegrees = cam.fov
+        if autoFollow {
+            let cur = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
+            let cam = path.sample(at: player.currentTime().seconds, global: globalFov, fallback: cur)
+            viewState.yaw = cam.yaw
+            viewState.pitch = cam.pitch
+            viewState.fovDegrees = cam.fov
+        } else if globalFov.enabled {
+            viewState.fovDegrees = globalFov.resolve(viewState.fovDegrees)
+        }
     }
 
     /// Adds (or replaces) a keyframe at the playhead using the current view.
@@ -623,6 +638,12 @@ extension PlayerModel {
             exportSettings = s
             loadingProject = false
         }
+        if let v = ProcessInfo.processInfo.environment["CC360_GLOBAL_FOV"], let deg = Float(v) {
+            loadingProject = true   // a test override: do not save it as the default
+            globalFov = GlobalFov(enabled: true, degrees: deg)
+            loadingProject = false
+            print("global fov: \(globalFov.degrees)"); fflush(stdout)
+        }
         let o = exportSettings.outputSize
         print("export settings: \(exportSettings.container.rawValue) \(exportSettings.codec.rawValue) \(o.width)x\(o.height)"); fflush(stdout)
         export(to: out)
@@ -645,6 +666,7 @@ extension PlayerModel {
         let mix = audioMix()
         let path = self.path
         let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
+        let global = globalFov
         let box = UncheckedBox((comp, vc, mix, stabilizer))
         let pending = placeTask
         let placement = overlayPlacement
@@ -653,7 +675,7 @@ extension PlayerModel {
                 await pending?.value   // make sure the location lookup has finished
                 let overlay = await MainActor.run { self?.overlayImage }
                 try Exporter.run(overlay: overlay, placement: placement, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
-                                 audioTrackIDs: audioIDs, path: path, fallback: fallback, stabilizer: box.value.3, settings: settings, to: url,
+                                 audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
             } catch {

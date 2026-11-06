@@ -9,7 +9,7 @@ enum Exporter {
     /// Blocking; call from a background thread.
     static func run(overlay: CGImage?, placement: OverlayPlacement, composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
-                    path: CameraPath, fallback: (yaw: Float, pitch: Float, fov: Float),
+                    path: CameraPath, global: GlobalFov, fallback: (yaw: Float, pitch: Float, fov: Float),
                     stabilizer: Stabilizer?, settings: ExportSettings, to url: URL,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure(errorDescription: "No Metal device.") }
@@ -83,7 +83,7 @@ enum Exporter {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sb)
                 renderer.setFrame(src)
                 state.frameTime = pts.seconds
-                let cam = path.sample(at: pts.seconds) ?? fallback
+                let cam = path.sample(at: pts.seconds, global: global, fallback: fallback)
                 renderer.renderSync(to: target, yaw: cam.yaw, pitch: cam.pitch, fov: cam.fov)
                 _ = cv
                 if !adaptor.append(out, withPresentationTime: pts) { fail(writer.error ?? Failure(errorDescription: "Append failed.")); vin.markAsFinished(); group.leave(); return }

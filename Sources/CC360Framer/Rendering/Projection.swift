@@ -30,6 +30,8 @@ final class ViewState {
     /// Corner / edge / centre the location card is drawn at.
     var overlayPlacement: OverlayPlacement = .bottomLeft
     /// Preview only: aspect (width / height) of the export frame to outline; nil = hidden.
+    /// True while a global fov is set: scroll/pinch zoom is ignored (the slider in the Export tab is the control).
+    var fovLocked = false
     var exportFrameAspect: Double?
     /// Called when the user takes manual control of the view (drag/zoom).
     var onUserLook: (() -> Void)?

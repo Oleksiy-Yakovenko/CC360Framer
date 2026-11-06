@@ -393,12 +393,14 @@ final class LookView: MTKView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        guard !state.fovLocked else { return }
         state.onUserLook?()
         let dy = Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.2 : 1.5)
         state.fovDegrees = max(20, min(140, state.fovDegrees - dy))
     }
 
     override func magnify(with event: NSEvent) {
+        guard !state.fovLocked else { return }
         state.onUserLook?()
         state.fovDegrees = max(20, min(140, state.fovDegrees * (1 - Float(event.magnification))))
     }

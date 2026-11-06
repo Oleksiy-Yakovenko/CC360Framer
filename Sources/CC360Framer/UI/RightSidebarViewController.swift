@@ -21,6 +21,9 @@ final class ExportTabViewController: ModelViewController {
     private let settingsView = ExportSettingsView()
     private let progressBar = NSProgressIndicator()
     private var frameCheck = NSButton()
+    private var fovCheck = NSButton()
+    private let fovSlider = NSSlider(value: 70, minValue: 20, maxValue: 140, target: nil, action: nil)
+    private let fovValue = NSTextField(labelWithString: "70°")
 
     override func loadView() {
         view = NSView()
@@ -32,11 +35,22 @@ final class ExportTabViewController: ModelViewController {
         progressBar.minValue = 0
         progressBar.maxValue = 1
         progressBar.isHidden = true
+        fovCheck = NSButton(checkboxWithTitle: "Global FOV", target: self, action: #selector(fovChanged))
+        fovCheck.toolTip = "Use one vertical field of view everywhere: it overrides the fov of all keyframes in the preview, the export and batch runs. While on, scroll and pinch zoom in the preview are disabled; use the slider."
+        fovSlider.target = self; fovSlider.action = #selector(fovChanged)
+        fovSlider.toolTip = "Vertical field of view in degrees, 20 to 140"
+        fovValue.alignment = .right
+        fovValue.setContentHuggingPriority(.required, for: .horizontal)
+        let fovRow = NSStackView(views: [fovSlider, fovValue])
+        fovRow.spacing = 6
+        fovRow.identifier = Kit.fullWidthID
         settingsView.identifier = Kit.fullWidthID
         Kit.sidebarStack(in: view, [
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
             settingsView,
             frameCheck,
+            fovCheck,
+            fovRow,
             progressBar,
         ], topAnchor: view.topAnchor)
     }
@@ -44,11 +58,22 @@ final class ExportTabViewController: ModelViewController {
     override func refresh() {
         settingsView.settings = model.exportSettings
         frameCheck.state = model.showExportFrame ? .on : .off
+        fovCheck.state = model.globalFov.enabled ? .on : .off
+        fovSlider.isEnabled = model.globalFov.enabled
+        fovSlider.doubleValue = Double(model.globalFov.degrees)
+        fovValue.stringValue = "\(Int(model.globalFov.degrees.rounded()))°"
         if let p = model.exportProgress {
             progressBar.doubleValue = p
             progressBar.toolTip = "Exporting… \(Int(p * 100))%"
         }
         progressBar.isHidden = model.exportProgress == nil
+    }
+
+    @objc private func fovChanged() {
+        var g = model.globalFov
+        g.enabled = fovCheck.state == .on
+        g.degrees = Float(fovSlider.doubleValue.rounded())
+        model.globalFov = g
     }
 
     @objc private func frameToggled() { model.showExportFrame = frameCheck.state == .on }
