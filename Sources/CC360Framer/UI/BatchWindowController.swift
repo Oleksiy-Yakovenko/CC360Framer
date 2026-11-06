@@ -24,7 +24,6 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
     private let forceCheck = NSButton(checkboxWithTitle: "Force re-analyse", target: nil, action: nil)
     private let exportCheck = NSButton(checkboxWithTitle: "Export", target: nil, action: nil)
     private var stylePopup = NSPopUpButton()
-    private var forwardPopup = NSPopUpButton()
     private var qualityPopup = NSPopUpButton()
     private let folderButton = NSButton()
     private let folderLabel = NSTextField(labelWithString: "")
@@ -116,7 +115,6 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         forceCheck.toolTip = "Analyse every file again and rebuild its camera path, replacing existing keyframes. Off: files with an analysis keep it (and their keyframes, also hand-edited ones); files without one are analysed."
         exportCheck.target = self; exportCheck.action = #selector(optionsChanged)
         exportCheck.toolTip = "Export a video for every file. Off: only analyse and build the camera path (keyframes are saved next to each video)."
-        forwardPopup = Kit.popup(TravelDirection.ForwardMode.allCases.map(\.title), tip: "Where Scenery shots look 'forward': along the direction of travel (from the accelerometer and GPS; needs movement and GPS), or straight ahead of the camera", target: self, action: #selector(optionsChanged))
         qualityPopup = Kit.popup(AnalysisQuality.allCases.map(\.rawValue), tip: AnalysisQuality.popupTip, target: self, action: #selector(optionsChanged))
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "Camera path style used when a path is built", target: self, action: #selector(optionsChanged))
         folderButton.title = "Choose…"
@@ -139,7 +137,6 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
                 Kit.checkRow(exportCheck),
                 Kit.row("Quality", qualityPopup, tip: AnalysisQuality.popupTip),
                 Kit.row("Path style", stylePopup, tip: "Camera path style"),
-                Kit.row("Forward", forwardPopup, tip: "Where Scenery shots look 'forward': along the direction of travel (from the accelerometer and GPS; needs movement and GPS), or straight ahead of the camera"),
                 Kit.row("Output", folderRow, tip: "Output folder for the exported videos"),
             ]),
             Kit.title("Export settings", tip: "Used for every exported file in this batch (stored separately from the per-video export settings)."),
@@ -180,7 +177,6 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         forceCheck.state = s.forceReanalyse ? .on : .off
         exportCheck.state = s.export ? .on : .off
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: s.style) ?? 0)
-        forwardPopup.selectItem(at: TravelDirection.ForwardMode.allCases.firstIndex(of: s.forwardMode) ?? 0)
         qualityPopup.selectItem(at: AnalysisQuality.allCases.firstIndex(of: s.analysisQuality) ?? 0)
         folderButton.isEnabled = s.export
         folderLabel.stringValue = s.outputFolder?.path ?? (s.export ? "Not chosen" : "")
@@ -226,7 +222,6 @@ final class BatchWindowController: NSWindowController, NSWindowDelegate, NSTable
         runner.settings.export = exportCheck.state == .on
         runner.settings.analysisQuality = AnalysisQuality.allCases[max(qualityPopup.indexOfSelectedItem, 0)]
         runner.settings.style = PathStyle.allCases[max(stylePopup.indexOfSelectedItem, 0)]
-        runner.settings.forwardMode = TravelDirection.ForwardMode.allCases[max(forwardPopup.indexOfSelectedItem, 0)]
     }
 
     @objc private func chooseFolder() {

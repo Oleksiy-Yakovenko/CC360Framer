@@ -7,8 +7,6 @@ struct BatchSettings: Codable, Equatable {
     /// Export the videos; off = only analysis and path building (keyframes are saved next to the video).
     var export = true
     var style: PathStyle = .follow
-    /// Where Scenery forward shots look.
-    var forwardMode: TravelDirection.ForwardMode = .travelDirection
     /// Views used when a file is analysed.
     var analysisQuality: AnalysisQuality = .fast
     /// Folder for the exported videos. Never defaults to the footage folder: it must be chosen before an export starts.
@@ -25,7 +23,6 @@ struct BatchSettings: Codable, Equatable {
         forceReanalyse = (try? c.decodeIfPresent(Bool.self, forKey: .forceReanalyse)) ?? false
         export = (try? c.decodeIfPresent(Bool.self, forKey: .export)) ?? true
         style = ((try? c.decodeIfPresent(String.self, forKey: .style)) ?? nil).flatMap { PathStyle(rawValue: $0) } ?? .follow
-        forwardMode = ((try? c.decodeIfPresent(String.self, forKey: .forwardMode)) ?? nil).flatMap { TravelDirection.ForwardMode(rawValue: $0) } ?? .travelDirection
         analysisQuality = AnalysisQuality(stored: (try? c.decodeIfPresent(String.self, forKey: .analysisQuality)) ?? nil)
         outputFolder = (try? c.decodeIfPresent(String.self, forKey: .outputFolder)).flatMap { $0 }.map { URL(fileURLWithPath: $0, isDirectory: true) }
         exportSettings = (try? c.decodeIfPresent(ExportSettings.self, forKey: .exportSettings)) ?? ExportSettings.loadDefaults()
@@ -36,13 +33,12 @@ struct BatchSettings: Codable, Equatable {
         try c.encode(forceReanalyse, forKey: .forceReanalyse)
         try c.encode(export, forKey: .export)
         try c.encode(style.rawValue, forKey: .style)
-        try c.encode(forwardMode.rawValue, forKey: .forwardMode)
         try c.encode(analysisQuality.rawValue, forKey: .analysisQuality)
         try c.encodeIfPresent(outputFolder?.path, forKey: .outputFolder)
         try c.encode(exportSettings, forKey: .exportSettings)
     }
 
-    private enum CodingKeys: String, CodingKey { case forceReanalyse, export, style, forwardMode, analysisQuality, outputFolder, exportSettings }
+    private enum CodingKeys: String, CodingKey { case forceReanalyse, export, style, analysisQuality, outputFolder, exportSettings }
 
     static func load(_ d: UserDefaults = .standard) -> BatchSettings {
         guard let data = d.data(forKey: defaultsKey), let s = try? JSONDecoder().decode(BatchSettings.self, from: data) else { return BatchSettings() }

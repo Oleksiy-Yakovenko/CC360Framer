@@ -8,7 +8,6 @@ enum BatchJob {
         var forceReanalyse = false
         var export = true
         var style: PathStyle = .follow
-        var forwardMode: TravelDirection.ForwardMode = .travelDirection
         var analysisQuality: AnalysisQuality = .fast
         var exportSettings = ExportSettings()
     }
@@ -63,10 +62,9 @@ enum BatchJob {
         let project = ProjectSidecar.load(for: url)   // per-file settings (direction lock, cuts, cards, ...)
         var keys = existingKeys
         if options.forceReanalyse || keys.isEmpty {
-            let travel = telemetry.flatMap { TravelDirection.estimate(telemetry: $0, duration: duration) }
             let lock = project.directionLock ?? false
-            let forward = DirectionLock.forwardYaw(lock: lock, lockedYaw: project.lockedYaw ?? 0, mode: options.forwardMode, estimate: travel, stabilizer: stabilizer)
-            log(lock ? DirectionLock.summary(yaw: project.lockedYaw ?? 0) : "forward: \(travel.map(\.summary) ?? "no estimate (camera front)")")
+            let forward = DirectionLock.forwardYaw(lock: lock, lockedYaw: project.lockedYaw ?? 0)
+            if lock { log(DirectionLock.summary(yaw: project.lockedYaw ?? 0)) }
             let built = options.style.keyframes(from: virtualObservations(observations, stabilizer: stabilizer), duration: duration, fov: 70, forwardYaw: forward)
             if !built.isEmpty {
                 keys = built

@@ -35,11 +35,6 @@ enum Snapshot {
                 ("front", 0, 0, 0), ("right", 90, 0, 0), ("back", 180, 0, 0), ("left", 270, 0, 0),
                 ("up", 0, 89, 0), ("down", 0, -89, 0),
             ]
-            // CC360_YAW=deg[,deg...] adds views at these yaws (level horizon, fov 70, in the stabilised camera when CC360_TELEMETRY is set).
-            for deg in (env["CC360_YAW"] ?? "").split(separator: ",").compactMap({ Float($0) }) {
-                state.yaw = deg * .pi / 180; state.pitch = 0
-                try render(r, state, mode: 0, size: (800, 600), to: args[1] + String(format: "-yaw%.0f.png", deg))
-            }
             try render(r, state, mode: 1, size: (1600, 800), to: args[1] + "-equirect.png")
             for (name, yaw, pitch, _) in views {
                 state.yaw = yaw * .pi / 180; state.pitch = pitch * .pi / 180

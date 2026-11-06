@@ -22,8 +22,6 @@ struct ProjectSidecar: Codable, Equatable {
     /// Captions (source time) and the global caption style for this file (nil = none / app default).
     var captions: [Caption]?
     var captionStyle: CaptionStyle?
-    /// Where Scenery "forward" shots look (nil = the app default).
-    var forwardMode: TravelDirection.ForwardMode?
     /// Direction lock (nil = off) and the last direction the user set, yaw in radians (nil = 0, camera front).
     var directionLock: Bool?
     var lockedYaw: Float?

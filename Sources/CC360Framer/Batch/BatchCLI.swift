@@ -15,7 +15,6 @@ enum BatchCLI {
             case "--force": settings.forceReanalyse = true
             case "--no-export": settings.export = false
             case "--style": settings.style = next() == "scenery" ? .scenery : .follow
-            case "--forward": settings.forwardMode = next() == "front" ? .cameraFront : .travelDirection
             case "--quality": settings.analysisQuality = next().flatMap { q in AnalysisQuality.allCases.first { $0.rawValue.lowercased().hasPrefix(q.lowercased()) } } ?? .fast
             case "--settings":
                 if let json = next(), let s = try? JSONDecoder().decode(ExportSettings.self, from: Data(json.utf8)) { settings.exportSettings = s }

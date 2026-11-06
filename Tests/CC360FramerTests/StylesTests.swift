@@ -86,7 +86,7 @@ final class SceneryForwardTests: XCTestCase {
         XCTAssertTrue(aimed.filter { $0.t >= 10 }.allSatisfy { $0.yaw == -0.25 })
     }
 
-    func testKeyframesAimAtTravelDirection() {
+    func testKeyframesAimAtGivenForwardYaw() {
         let keys = PathStyle.scenery.keyframes(from: [], duration: 30, fov: 70, forwardYaw: { _ in 0.6 })
         XCTAssertFalse(keys.isEmpty)
         XCTAssertTrue(keys.allSatisfy { abs($0.yaw - 0.6) < 0.01 })

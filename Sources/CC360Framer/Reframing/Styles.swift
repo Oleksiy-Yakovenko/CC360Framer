@@ -9,7 +9,7 @@ enum PathStyle: String, CaseIterable, Identifiable {
     /// The camera only follows people and objects that stay detected for at least this long (seconds).
     static let minTrackDuration = 2.0
 
-    /// `forwardYaw` (scenery only) gives the yaw of the direction of travel in the path's own (stabilised) frame at a time;
+    /// `forwardYaw` (scenery only) gives the yaw of the locked forward direction in the path's own (stabilised) frame at a time;
     /// nil = straight ahead of the camera.
     func keyframes(from allObs: [Observation], duration: Double, fov: Float, forwardYaw: ((Double) -> Float)? = nil) -> [Keyframe] {
         // Single entry point for both styles: drop short-lived detections (see DetectionTracks.filter
@@ -46,8 +46,8 @@ func continuityWeight(_ c: Candidate, _ prev: (yaw: Float, pitch: Float)?) -> Fl
 }
 
 /// Looks forward along the direction of travel, glances at interesting objects on the sides,
-/// and now and then swings round to show the rider. "Forward" is the direction of travel when the caller
-/// gives one (`forwardYaw`, see `TravelDirection`), else yaw 0 (the camera is fixed to the bike); the rider is found as the typical person direction.
+/// and now and then swings round to show the rider. "Forward" is the locked direction when the caller
+/// gives one (`forwardYaw`, the Direction lock), else yaw 0 (the camera is fixed to the bike); the rider is found as the typical person direction.
 enum SceneryPlanner {
     private enum Kind { case forward, side, rider }
     /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot.

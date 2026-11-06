@@ -8,12 +8,11 @@ enum DirectionLock {
     /// Smaller changes of the recorded yaw are ignored (no save for nothing).
     static let epsilon: Float = 1e-4
 
-    /// The forward closure for the path builders. With the lock on it is the constant `lockedYaw` for every time and beats
-    /// the Forward setting and the estimate; with the lock off it is `TravelDirection.forwardYaw` (nil = camera front).
-    static func forwardYaw(lock: Bool, lockedYaw: Float, mode: TravelDirection.ForwardMode, estimate: TravelDirection.Estimate?,
-                           stabilizer: Stabilizer?) -> ((Double) -> Float)? {
-        if lock { let y = wrapAngle(lockedYaw); return { _ in y } }
-        return TravelDirection.forwardYaw(mode: mode, estimate: estimate, stabilizer: stabilizer)
+    /// The forward closure for the path builders: the constant `lockedYaw` for every time with the lock on, nil (camera front, yaw 0) with it off.
+    static func forwardYaw(lock: Bool, lockedYaw: Float) -> ((Double) -> Float)? {
+        guard lock else { return nil }
+        let y = wrapAngle(lockedYaw)
+        return { _ in y }
     }
 
     /// The yaw to record once the view has settled: the wrapped view yaw if it differs from the stored one, else nil.

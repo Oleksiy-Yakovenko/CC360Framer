@@ -142,11 +142,7 @@ final class PlayerModel: ObservableObject {
     @Published var style: PathStyle = PathStyle(rawValue: UserDefaults.standard.string(forKey: "pathStyle") ?? "") ?? .follow {
         didSet { UserDefaults.standard.set(style.rawValue, forKey: "pathStyle") }
     }
-    /// Where Scenery "forward" shots look. App default in UserDefaults (`forwardMode`), per file in the project sidecar.
-    @Published var forwardMode = TravelDirection.ForwardMode.loadDefault()
-    /// Set once the user chose a mode for this file (then it is saved in the project sidecar).
-    private var forwardModeSaved: TravelDirection.ForwardMode?
-    /// Direction lock: the last direction the user rotated the view to is forward (overrides `forwardMode`). Per file in the project sidecar.
+    /// Direction lock: the last direction the user rotated the view to is forward for the Scenery shots. Per file in the project sidecar.
     @Published private(set) var directionLock = false {
         didSet { syncViewForward() }
     }
@@ -156,8 +152,6 @@ final class PlayerModel: ObservableObject {
     }
     private var dragSettle = DirectionLock.Settle()
     private var settleTask: Task<Void, Never>?
-    /// Direction of travel from accelerometer + GPS; nil when the file has no GPS, never moves, or nothing is coherent.
-    private(set) var travelEstimate: TravelDirection.Estimate?
     @Published var stabilization: StabilizeMode = .smooth
     /// Export format, size and rate control. App-wide default in UserDefaults, per file in the project sidecar.
     @Published var exportSettings = ExportSettings.loadDefaults() {
@@ -331,10 +325,8 @@ final class PlayerModel: ObservableObject {
         captions = proj.captions ?? []
         selectedCaption = nil
         captionStyle = proj.captionStyle ?? CaptionStyle.loadDefaults()
-        forwardModeSaved = proj.forwardMode
         directionLock = proj.directionLock ?? false
         lockedYaw = proj.lockedYaw ?? 0
-        forwardMode = proj.forwardMode ?? TravelDirection.ForwardMode.loadDefault()
         previewWithCuts = proj.previewWithCuts ?? false
         restoringPlacement = true
         overlayPlacement = proj.locationPlacement
@@ -350,7 +342,7 @@ final class PlayerModel: ObservableObject {
                        cuts: cuts.isEmpty ? nil : cuts, previewWithCuts: previewWithCuts ? true : nil,
                        locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false,
                        showLocationCard: cardOptions.show ? nil : false, locationFields: cardOptions.fields == LocationCardFields() ? nil : cardOptions.fields,
-                       captions: captions.isEmpty ? nil : captions, captionStyle: captionStyle, forwardMode: forwardModeSaved,
+                       captions: captions.isEmpty ? nil : captions, captionStyle: captionStyle,
                        directionLock: directionLock ? true : nil, lockedYaw: lockedYaw == 0 ? nil : lockedYaw).save(for: sourceURL)
     }
 
@@ -463,7 +455,6 @@ final class PlayerModel: ObservableObject {
                 }
             }
             telemetry = Telemetry.load(url: url)
-            travelEstimate = telemetry.flatMap { TravelDirection.estimate(telemetry: $0, duration: self.duration) }
             loadProject(for: url)
             viewState.yaw = viewState.forwardYaw   // the initial view looks along the locked direction (0 without the lock)
             loadPlace(for: url)
@@ -749,7 +740,7 @@ extension PlayerModel {
 
     /// The "forward" direction for Scenery shots in the stabilised frame, or nil = camera front.
     private func forwardYaw() -> ((Double) -> Float)? {
-        DirectionLock.forwardYaw(lock: directionLock, lockedYaw: lockedYaw, mode: forwardMode, estimate: travelEstimate, stabilizer: stabilizer)
+        DirectionLock.forwardYaw(lock: directionLock, lockedYaw: lockedYaw)
     }
 
     private func syncViewForward() { viewState.forwardYaw = directionLock ? lockedYaw : 0 }
@@ -772,7 +763,7 @@ extension PlayerModel {
         saveProject()
     }
 
-    /// Ticking the lock keeps the view where it is; forward becomes the last direction the user set. Regenerates like `setForwardMode`.
+    /// Ticking the lock keeps the view where it is; forward becomes the last direction the user set. Regenerates the Scenery path.
     func setDirectionLock(_ on: Bool) {
         guard on != directionLock else { return }
         directionLock = on
@@ -780,25 +771,8 @@ extension PlayerModel {
         if style == .scenery { styleChanged() }
     }
 
-    /// Text for the Forward popup tooltip / status: what the estimate found.
-    var forwardNote: String {
-        if directionLock { return DirectionLock.summary(yaw: lockedYaw) }
-        guard let e = travelEstimate, e.isUsable else {
-            return "No direction of travel available (needs GPS and some movement): forward is the camera front."
-        }
-        guard let deg = e.meanDegrees else { return "" }
-        return String(format: "Direction of travel: %.0f deg %@ of camera front.", abs(deg), deg >= 0 ? "right" : "left")
-    }
-
-    /// The user's Forward choice: remembered as the app default and saved with the file; regenerates like a style change.
-    func setForwardMode(_ mode: TravelDirection.ForwardMode) {
-        guard mode != forwardMode else { return }
-        forwardMode = mode
-        forwardModeSaved = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: TravelDirection.ForwardMode.defaultsKey)
-        saveProject()
-        if style == .scenery { styleChanged() }
-    }
+    /// Status text about the lock ("Direction lock: forward is N deg ..."); empty when the lock is off.
+    var forwardNote: String { directionLock ? DirectionLock.summary(yaw: lockedYaw) : "" }
 
     /// Replaces the keyframes with a path generated from the stored observations in the chosen style.
     func buildPath() {
@@ -811,7 +785,7 @@ extension PlayerModel {
             autoFollow = true
             saveKeyframes()
         }
-        statusText = "\(style.rawValue): \(keys.count) keyframes." + (style == .scenery && forwardYaw() != nil ? " " + forwardNote : "")
+        statusText = "\(style.rawValue): \(keys.count) keyframes." + (style == .scenery && directionLock ? " " + forwardNote : "")
     }
 
     /// Switching style regenerates the path straight away, unless that would discard manual edits.

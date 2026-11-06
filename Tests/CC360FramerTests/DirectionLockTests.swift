@@ -2,37 +2,22 @@ import XCTest
 @testable import CC360Framer
 
 final class DirectionLockTests: XCTestCase {
-    private func estimate(_ yaw: Double) -> TravelDirection.Estimate {
-        let w = (0..<6).map { TravelDirection.Window(time: Double($0) * 10, yaw: yaw, coherence: 0.9, samples: 100, accepted: true) }
-        return TravelDirection.Estimate(windows: w, lag: 0, globalYaw: yaw, globalCoherence: 1)
-    }
-
     func testLockOnIsConstantForEveryTime() throws {
-        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: true, lockedYaw: 0.611, mode: .cameraFront, estimate: nil, stabilizer: nil))
+        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: true, lockedYaw: 0.611))
         for t in [0.0, 12.5, 999] { XCTAssertEqual(f(t), 0.611, accuracy: 1e-6) }
     }
 
-    func testLockBeatsEstimateAndForwardMode() throws {
-        let e = estimate(-0.9)
-        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: true, lockedYaw: 0.3, mode: .travelDirection, estimate: e, stabilizer: nil))
-        XCTAssertEqual(f(30), 0.3, accuracy: 1e-6)
-    }
-
     func testLockOnWithZeroIsCameraFrontNotNil() throws {
-        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: true, lockedYaw: 0, mode: .travelDirection, estimate: estimate(0.5), stabilizer: nil))
+        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: true, lockedYaw: 0))
         XCTAssertEqual(f(10), 0)
     }
 
-    func testLockOffKeepsTodaysBehaviour() throws {
-        let e = estimate(0.5)
-        XCTAssertNil(DirectionLock.forwardYaw(lock: false, lockedYaw: 1, mode: .cameraFront, estimate: e, stabilizer: nil))
-        XCTAssertNil(DirectionLock.forwardYaw(lock: false, lockedYaw: 1, mode: .travelDirection, estimate: nil, stabilizer: nil))
-        let f = try XCTUnwrap(DirectionLock.forwardYaw(lock: false, lockedYaw: 1, mode: .travelDirection, estimate: e, stabilizer: nil))
-        XCTAssertEqual(f(30), 0.5, accuracy: 0.07)
+    func testLockOffIsNil() {
+        XCTAssertNil(DirectionLock.forwardYaw(lock: false, lockedYaw: 1))
     }
 
     func testSceneryForwardShotsSitAtLockedYaw() throws {
-        let f = DirectionLock.forwardYaw(lock: true, lockedYaw: 0.611, mode: .cameraFront, estimate: nil, stabilizer: nil)
+        let f = DirectionLock.forwardYaw(lock: true, lockedYaw: 0.611)
         let samples = SceneryPlanner.plan([], duration: 30, forwardYaw: f)
         XCTAssertFalse(samples.isEmpty)
         XCTAssertTrue(samples.allSatisfy { abs($0.yaw - 0.611) < 1e-6 && $0.pitch == 0 })
@@ -84,7 +69,6 @@ final class DirectionLockTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(back.lockedYaw), 0.611, accuracy: 1e-6)
         let old = try XCTUnwrap(ProjectSidecar.decode(Data(#"{"forwardMode":"cameraFront"}"#.utf8)))
         XCTAssertNil(old.directionLock); XCTAssertNil(old.lockedYaw)
-        XCTAssertEqual(old.forwardMode, .cameraFront)
         XCTAssertNil(ProjectSidecar.decode(Data("{}".utf8))?.directionLock)
     }
 }
