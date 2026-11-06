@@ -60,6 +60,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var controllers: [DocumentWindowController] = []
+    private lazy var batchWindow = BatchWindowController()
 
     /// The window menu actions apply to: the key window's, else the main window's, else the newest.
     private var current: DocumentWindowController? {
@@ -127,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if panel.runModal() == .OK, let url = panel.url { model.export(to: url) }
     }
 
+    @objc func showBatch(_ sender: Any?) { batchWindow.show() }
     @objc func toggleSidebar(_ sender: Any?) { current?.main.toggleSidebar(sender) }
     @objc func toggleInspector(_ sender: Any?) { current?.main.toggleInspector() }
     @objc func togglePlay(_ sender: Any?) { current?.model.togglePlay() }
@@ -171,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let file = submenu("File")
         add(file, "Open…", #selector(openDocument), "o", target: self)
         add(file, "Export…", #selector(exportDocument), "e", target: self)
+        add(file, "Batch Processing…", #selector(showBatch), "b", [.command, .shift], target: self)
         file.addItem(.separator())
         add(file, "Close", #selector(NSWindow.performClose(_:)), "w")
 

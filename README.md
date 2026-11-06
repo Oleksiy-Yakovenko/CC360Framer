@@ -37,7 +37,18 @@ Xcode:
 
 Limits: rotation compensation cannot remove shake caused by camera translation (small residual wobble at 0.5–2 Hz). HiLight tags and gyro/accelerometer data are not used yet (only orientation, gravity and the first GPS fix).
 
+## Batch processing
+
+File > Batch Processing... (Shift-Cmd-B) or the toolbar button opens one shared window. Drop `.360` files or folders on the list (folders are searched recursively, duplicates ignored) or use Add...; drag rows to reorder, Remove/Delete removes the selected rows, Clear empties the list. Start processes the files one after another; Pause finishes the current file and stops (Resume continues, failed files are retried).
+
+- Force re-analyse: analyse again and rebuild the camera path. Off: an existing analysis is reused and existing keyframes (also hand-edited) are kept; files without analysis are analysed.
+- Export: off = only analyse and build the path (keyframes are saved as usual).
+- Path style, output folder (required for export, never defaults to the footage folder; exported as `<name>-reframed.<ext>`, `-2`, `-3`... on collisions) and the export settings (same editor as the Export tab, stored separately from per-video settings) apply to the whole batch.
+- Cuts, captions, location cards and the global fov of each file come from its own sidecars; sidecars are written next to each source file as usual.
+
 ## Command line tools and debugging
+
+- `--batch-run [--out DIR] [--force] [--no-export] [--style follow|scenery] [--settings EXPORT_JSON] FILE_OR_FOLDER...`: the batch engine without UI (settings are not saved).
 
 - `--telemetry file.360`: print parsed telemetry counts and first/last samples.
 - `--telemetry` also prints the first GPS fix with its altitude (median of the first locked fixes, GPS height in metres).

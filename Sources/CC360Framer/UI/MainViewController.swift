@@ -75,6 +75,7 @@ final class CenterViewController: NSViewController {
 private extension NSToolbarItem.Identifier {
     static let appTitle = NSToolbarItem.Identifier("appTitle")
     static let export = NSToolbarItem.Identifier("export")
+    static let batch = NSToolbarItem.Identifier("batch")
     static let inspector = NSToolbarItem.Identifier("inspector")
 }
 
@@ -98,7 +99,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         middle.minimumThickness = 420
         // Let AppKit draw the toolbar sections and separators; the centre item adds no drawing of its own.
         middle.titlebarSeparatorStyle = .automatic
-        middle.automaticallyAdjustsSafeAreaInsets = true
+        if #available(macOS 26.0, *) { middle.automaticallyAdjustsSafeAreaInsets = true }
         left.titlebarSeparatorStyle = .automatic
         inspectorItem = NSSplitViewItem(inspectorWithViewController: RightSidebarViewController(model: model))
         inspectorItem.minimumThickness = 280
@@ -145,7 +146,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         // The separators follow the split view dividers, so the items sit above the pane they belong to.
-        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, .inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .appTitle, .export, .batch, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, .inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -164,6 +165,8 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
             exportItem = item
             updateToolbar()
             return item
+        case .batch:
+            return button(id, "Batch", "square.stack.3d.up", "Batch Processing", delegate, #selector(AppDelegate.showBatch))
         case .inspector:
             return button(id, "Inspector", "sidebar.right", "Show or hide the right sidebar", delegate, #selector(AppDelegate.toggleInspector))
         default:
