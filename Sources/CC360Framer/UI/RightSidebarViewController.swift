@@ -8,7 +8,7 @@ final class RightSidebarViewController: ModelViewController {
         ("Location", "mappin.and.ellipse", "Location Card Settings", LocationTabViewController(model: model)),
         ("Audio", "speaker.wave.2", "Audio", AudioTabViewController(model: model)),
         ("Document", "doc", "Document", DocumentTabViewController(model: model)),
-        ("Export", "arrow.up.circle.fill", "Export Settings", ExportTabViewController(model: model)),
+        ("Export", "arrowshape.up.fill", "Export Settings", ExportTabViewController(model: model)),
     ]
 
     override func loadView() {
