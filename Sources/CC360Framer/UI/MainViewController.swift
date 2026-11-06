@@ -96,7 +96,9 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         left.maximumThickness = 400
         let middle = NSSplitViewItem(viewController: center)
         middle.minimumThickness = 420
-        middle.titlebarSeparatorStyle = .line   // line under the toolbar over the preview
+        // Let AppKit draw the toolbar sections and separators; the centre item adds no drawing of its own.
+        middle.titlebarSeparatorStyle = .automatic
+        middle.automaticallyAdjustsSafeAreaInsets = true
         left.titlebarSeparatorStyle = .automatic
         inspectorItem = NSSplitViewItem(inspectorWithViewController: RightSidebarViewController(model: model))
         inspectorItem.minimumThickness = 280
