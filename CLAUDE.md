@@ -11,6 +11,8 @@ Notes for working here:
 - Never write into the user's footage folder (`~/Movies/GoPro/...`); symlink the video and copy sidecars into the scratchpad.
 
 ## Architecture (`Sources/CC360Framer/`)
+Folders: `App/` (`main.swift`, `App.swift`), `UI/` (view controllers, `ViewKit.swift`), `Model/` (`PlayerModel.swift`), `Media/` (`StackCompositor`, `Telemetry`, `Stabilizer`), `Rendering/` (`Renderer`, `Projection`, `LocationOverlay`), `Reframing/` (`Analyzer`, `Styles`, `CameraPath`), `Export/` (`Exporter`), `Diagnostics/` (`Snapshot`, `StabTest`, `Pacing`). Files are referenced below by name only.
+
 - `main.swift`: dispatches CLI modes, otherwise `CC360FramerApp.main()`.
 - `App.swift`: `AppDelegate` (window, menu, open/export actions) and `CC360FramerApp.main()`. The UI is AppKit (no SwiftUI), one view controller per area, all subclasses of `ModelViewController` (`ViewKit.swift`: subscribes to `PlayerModel.objectWillChange`, calls `refresh()`):
   `MainViewController.swift` (`NSSplitViewController` left sidebar | centre | right inspector, window toolbar with tracking separators, file drop), `LeftSidebarViewController` (Auto, analysis, path style, stabilise, location), `RightSidebarViewController` (export preset), `PlayerViewController` (Metal `LookView` + error banner), `TransportViewController` (play, seekbar, keyframe ticks, audio toggles), `KeyframeViewController` (keyframe edit buttons, status line). Keyboard shortcuts (space, K, Delete) are menu key equivalents.
