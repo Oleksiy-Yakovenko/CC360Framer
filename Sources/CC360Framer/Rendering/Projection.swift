@@ -29,6 +29,8 @@ final class ViewState {
     var frameTime: Double = 0
     /// Corner / edge / centre the location card is drawn at.
     var overlayPlacement: OverlayPlacement = .bottomLeft
+    /// Preview only: aspect (width / height) of the export frame to outline; nil = hidden.
+    var exportFrameAspect: Double?
     /// Called when the user takes manual control of the view (drag/zoom).
     var onUserLook: (() -> Void)?
 

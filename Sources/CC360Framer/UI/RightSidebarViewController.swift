@@ -20,9 +20,12 @@ final class RightSidebarViewController: ModelViewController {
 final class ExportTabViewController: ModelViewController {
     private let settingsView = ExportSettingsView()
     private let progressBar = NSProgressIndicator()
+    private var frameCheck = NSButton()
 
     override func loadView() {
         view = NSView()
+        frameCheck = NSButton(checkboxWithTitle: "Show export frame", target: self, action: #selector(frameToggled))
+        frameCheck.toolTip = "Outline the exported area in the preview and dim the rest. Preview only, never exported. The vertical field of view is the same, so a different aspect ratio changes the horizontal extent."
         settingsView.onChange = { [weak self] in self?.model.exportSettings = $0 }
         progressBar.style = .bar
         progressBar.isIndeterminate = false
@@ -33,18 +36,22 @@ final class ExportTabViewController: ModelViewController {
         Kit.sidebarStack(in: view, [
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
             settingsView,
+            frameCheck,
             progressBar,
         ], topAnchor: view.topAnchor)
     }
 
     override func refresh() {
         settingsView.settings = model.exportSettings
+        frameCheck.state = model.showExportFrame ? .on : .off
         if let p = model.exportProgress {
             progressBar.doubleValue = p
             progressBar.toolTip = "Exporting… \(Int(p * 100))%"
         }
         progressBar.isHidden = model.exportProgress == nil
     }
+
+    @objc private func frameToggled() { model.showExportFrame = frameCheck.state == .on }
 }
 
 /// Audio tracks to include in playback and export.

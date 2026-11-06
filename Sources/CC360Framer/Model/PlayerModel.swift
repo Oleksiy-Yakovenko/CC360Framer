@@ -70,11 +70,14 @@ final class PlayerModel: ObservableObject {
     /// Export format, size and rate control. App-wide default in UserDefaults, per file in the project sidecar.
     @Published var exportSettings = ExportSettings.loadDefaults() {
         didSet {
+            if showExportFrame { viewState.exportFrameAspect = exportSettings.aspectValue }
             guard exportSettings != oldValue, !loadingProject else { return }
             exportSettings.saveDefaults()
             saveProject()
         }
     }
+    /// Preview only: outline the export aspect in the player (not saved).
+    @Published var showExportFrame = false { didSet { viewState.exportFrameAspect = showExportFrame ? exportSettings.aspectValue : nil } }
     private var telemetry: Telemetry?
     /// Location title card for the first seconds of the clip; nil when the file has no GPS lock.
     private(set) var overlayImage: CGImage?

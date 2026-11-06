@@ -111,6 +111,28 @@ fragment float4 ofs(OOut in [[stage_in]], constant OU& u [[buffer(0)]], texture2
 }
 """
 
+/// Preview guide: dims everything outside the export frame and outlines it. `r` = half extents (ndc) and target size in px.
+private let guideShaderSource = """
+#include <metal_stdlib>
+using namespace metal;
+struct GU { float4 r; };
+struct GOut { float4 pos [[position]]; float2 ndc; };
+vertex GOut gvs(uint vid [[vertex_id]]) {
+    float2 p = float2((vid << 1) & 2, vid & 2);
+    GOut o;
+    o.pos = float4(p * 2.0 - 1.0, 0, 1);
+    o.ndc = p * 2.0 - 1.0;
+    return o;
+}
+fragment float4 gfs(GOut in [[stage_in]], constant GU& u [[buffer(0)]]) {
+    float2 d = (abs(in.ndc) - u.r.xy) * u.r.zw * 0.5;   // pixels beyond the frame edge (negative inside)
+    float m = max(d.x, d.y);
+    if (m > 0.0) return float4(0, 0, 0, 0.55);          // premultiplied black at 55 %
+    if (m > -1.5) return float4(0.9, 0.9, 0.9, 0.9);    // thin outline just inside the edge
+    return float4(0);
+}
+"""
+
 /// Draws the projected view of a stacked 5888x3840 BGRA frame.
 final class Renderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
@@ -130,6 +152,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var preDraw: (() -> Void)?
     private var stackTexture: MTLTexture?
     private let overlayPipeline: MTLRenderPipelineState
+    private let guidePipeline: MTLRenderPipelineState
     private var overlayTexture: MTLTexture?
 
     init(device: MTLDevice, state: ViewState, pixelFormat: MTLPixelFormat) throws {
@@ -152,6 +175,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         ca.sourceRGBBlendFactor = .one; ca.sourceAlphaBlendFactor = .one
         ca.destinationRGBBlendFactor = .oneMinusSourceAlpha; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         overlayPipeline = try device.makeRenderPipelineState(descriptor: od)
+        let gl = try device.makeLibrary(source: guideShaderSource, options: nil)
+        let gd = MTLRenderPipelineDescriptor()
+        gd.vertexFunction = gl.makeFunction(name: "gvs")
+        gd.fragmentFunction = gl.makeFunction(name: "gfs")
+        gd.colorAttachments[0].pixelFormat = pixelFormat
+        gd.colorAttachments[0].isBlendingEnabled = true
+        gd.colorAttachments[0].sourceRGBBlendFactor = .one; gd.colorAttachments[0].sourceAlphaBlendFactor = .one
+        gd.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha; gd.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        guidePipeline = try device.makeRenderPipelineState(descriptor: gd)
         let s = MTLSamplerDescriptor()
         s.minFilter = .linear; s.magFilter = .linear
         s.sAddressMode = .clampToEdge; s.tAddressMode = .clampToEdge
@@ -266,7 +298,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         cb.waitUntilCompleted()
     }
 
-    func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float, size: CGSize) {
+    /// `showGuide` is for the on-screen preview only; renderSync (export, snapshots) never draws it.
+    func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float, size: CGSize, showGuide: Bool = false) {
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         if let texture {
             let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
@@ -282,6 +315,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
         drawOverlay(enc, targetWidth: Float(size.width), targetHeight: Float(size.height))
+        if showGuide, let ea = state.exportFrameAspect, size.height > 0 {
+            let h = ExportFrame.halfExtent(previewAspect: Double(size.width / size.height), exportAspect: ea)
+            var g: [Float] = [Float(h.x), Float(h.y), Float(size.width), Float(size.height)]
+            enc.setRenderPipelineState(guidePipeline)
+            enc.setFragmentBytes(&g, length: g.count * 4, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
         enc.endEncoding()
     }
 
@@ -300,7 +340,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
         let size = view.drawableSize
-        encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)), size: size)
+        encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)), size: size, showGuide: true)
         cb.present(drawable)
         if Pacing.enabled {
             Pacing.drew()
