@@ -72,3 +72,51 @@ final class DirectionLockTests: XCTestCase {
         XCTAssertNil(ProjectSidecar.decode(Data("{}".utf8))?.directionLock)
     }
 }
+
+final class SceneryRelativeSideTests: XCTestCase {
+    private func cand(_ yaw: Float, _ score: Float = 0.9) -> Candidate { Candidate(yaw: yaw, pitch: 0.1, score: score) }
+    private func obs(salient: [Float], seconds: Int = 120) -> [Observation] {
+        (0..<(seconds * 5)).map { Observation(t: Double($0) * 0.2, people: [cand(.pi, 1)], salient: salient.map { cand($0) }) }
+    }
+    private func glances(_ s: [Sample], near yaw: Float) -> Bool { s.contains { $0.fov == 55 && abs($0.yaw - yaw) < 1e-3 } }
+    private let fwd: Float = 35 * .pi / 180
+
+    func testRightObjectRelativeToForwardIsGlancedAt() {
+        let y: Float = 125 * .pi / 180
+        let s = SceneryPlanner.plan(obs(salient: [y]), duration: 120, forwardYaw: { _ in self.fwd })
+        XCTAssertTrue(glances(s, near: y))
+    }
+
+    func testObjectStraightAheadOfForwardIsNoSideGlance() {
+        let s = SceneryPlanner.plan(obs(salient: [fwd]), duration: 120, forwardYaw: { _ in self.fwd })
+        XCTAssertFalse(s.contains { $0.fov == 55 && abs($0.yaw - self.fwd) < 1e-3 })
+        // while it would be ... not a side glance with nil forward either (|yaw| 35 deg is on the edge), use a clear case:
+        let y: Float = 60 * .pi / 180   // absolute right side, but only 25 deg off forward
+        let s2 = SceneryPlanner.plan(obs(salient: [y]), duration: 120, forwardYaw: { _ in self.fwd })
+        XCTAssertFalse(glances(s2, near: y))
+        XCTAssertTrue(glances(SceneryPlanner.plan(obs(salient: [y]), duration: 120), near: y))
+    }
+
+    func testObjectNearCameraFrontIsLeftSideWhenForwardIsRight() {
+        let y: Float = -5 * .pi / 180   // d = -40 deg
+        let s = SceneryPlanner.plan(obs(salient: [y]), duration: 120, forwardYaw: { _ in self.fwd })
+        XCTAssertTrue(glances(s, near: y))
+        XCTAssertFalse(glances(SceneryPlanner.plan(obs(salient: [y]), duration: 120), near: y))  // absolute: too close to front
+    }
+
+    func testNilForwardEqualsZeroClosure() {
+        let o = obs(salient: [1.5, -2.0, 0.3])
+        let a = SceneryPlanner.plan(o, duration: 120)
+        let b = SceneryPlanner.plan(o, duration: 120, forwardYaw: { _ in 0 })
+        XCTAssertEqual(a.map(\.yaw), b.map(\.yaw))
+        XCTAssertEqual(a.map(\.fov), b.map(\.fov))
+    }
+
+    func testTimeVaryingForward() {
+        let y: Float = 125 * .pi / 180
+        // Forward is 35 deg for the first minute (object at d = 90: glance), then 125 deg (d = 0: none).
+        let s = SceneryPlanner.plan(obs(salient: [y]), duration: 120, forwardYaw: { $0 < 60 ? 35 * .pi / 180 : 125 * .pi / 180 })
+        XCTAssertTrue(s.contains { $0.t < 60 && $0.fov == 55 && abs($0.yaw - y) < 1e-3 })
+        XCTAssertFalse(s.contains { $0.t >= 62 && $0.fov == 55 })
+    }
+}

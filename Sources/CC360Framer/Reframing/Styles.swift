@@ -48,6 +48,10 @@ func continuityWeight(_ c: Candidate, _ prev: (yaw: Float, pitch: Float)?) -> Fl
 /// Looks forward along the direction of travel, glances at interesting objects on the sides,
 /// and now and then swings round to show the rider. "Forward" is the locked direction when the caller
 /// gives one (`forwardYaw`, the Direction lock), else yaw 0 (the camera is fixed to the bike); the rider is found as the typical person direction.
+/// Side glances are measured from that forward direction (the sign of the angle to it is the side, `sideRange` its size); the glance
+/// itself looks at the object's absolute detection yaw. The rider exclusion stays absolute (the rider is behind the camera wherever
+/// forward points). Analysis limit, also absolute: saliency is only searched in views not within 45 deg of the camera front/back
+/// (`AnalysisQuality.isSideView`), so objects near the camera axis are never detected whatever forward is.
 enum SceneryPlanner {
     private enum Kind { case forward, side, rider }
     /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot.
@@ -80,7 +84,7 @@ enum SceneryPlanner {
             var made: [Sample] = []
             switch planned {
             case .side:
-                if let r = sideShot(byIndex, i..<end, lastSide: lastSide, rider: rider) {
+                if let r = sideShot(byIndex, i..<end, lastSide: lastSide, rider: rider, forwardYaw: forwardYaw) {
                     made = r.samples; lastSide = r.side
                 } else if let rider, riderCount < riderMax, Double(i) * dt - lastRiderT >= riderGap {
                     let rEnd = min(i + Int(riderShotLength / dt), total)
@@ -113,10 +117,13 @@ enum SceneryPlanner {
     }
 
     /// Picks the side with the more interesting objects (alternating when similar) and follows one object.
-    private static func sideShot(_ obs: [Int: Observation], _ r: Range<Int>, lastSide: Float, rider: (yaw: Float, pitch: Float)?) -> (samples: [Sample], side: Float)? {
+    private static func sideShot(_ obs: [Int: Observation], _ r: Range<Int>, lastSide: Float, rider: (yaw: Float, pitch: Float)?,
+                                 forwardYaw: ((Double) -> Float)? = nil) -> (samples: [Sample], side: Float)? {
         func candidates(_ i: Int, _ side: Float) -> [Candidate] {
             obs[i]?.salient.filter { c in
-                c.yaw.sign == (side > 0 ? .plus : .minus) && sideRange.contains(abs(c.yaw))
+                // Side and range are measured from the forward direction at the observation time.
+                let d = forwardYaw.map { wrapAngle(c.yaw - $0(Double(i) * dt)) } ?? c.yaw  // nil: exactly the camera-front geometry
+                return d.sign == (side > 0 ? .plus : .minus) && sideRange.contains(abs(d))
                     && !(rider.map { abs(wrapAngle(c.yaw - $0.yaw)) < riderExclusion } ?? false)
             } ?? []
         }
