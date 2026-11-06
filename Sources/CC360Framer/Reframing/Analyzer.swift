@@ -37,7 +37,7 @@ enum Analyzer {
     /// With a `stabilizer`, the views are rendered level with the horizon (people upright, the horizon band
     /// covered) and the detections are converted back to body-frame directions, so stored observations
     /// do not depend on the stabilisation mode. `range` limits the pass (used for comparisons).
-    static func run(asset: AVAsset, videoTracks: [AVAssetTrack], step: Int = 6,
+    static func run(asset: AVAsset, videoTracks: [AVAssetTrack], duration assetDuration: Double, step: Int = 6,
                     stabilizer: Stabilizer? = nil, range: CMTimeRange? = nil,
                     progress: @escaping (Double) -> Void, cancel: CancelFlag) throws -> [Observation] {
         guard videoTracks.count == 2, let device = MTLCreateSystemDefaultDevice() else {
@@ -71,7 +71,7 @@ enum Analyzer {
 
         var observations: [Observation] = []
         var index = 0
-        let duration = max(asset.duration.seconds, 0.001)
+        let duration = max(assetDuration, 0.001)
         while let a = outs[0].copyNextSampleBuffer(), let b = outs[1].copyNextSampleBuffer() {
             defer { index += 1 }
             if cancel.isSet { reader.cancelReading(); throw CancellationError() }

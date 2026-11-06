@@ -9,7 +9,7 @@ Command line:
     ./build.sh && open CC360Framer.app
     CC360Framer.app/Contents/MacOS/CC360Framer GS010074.360     # open a file on launch
 
-`./build.sh` makes a release build wrapped as an ad-hoc signed `CC360Framer.app`. You can also use `swift build` (or `swift build -c release`) and `swift run CC360Framer file.360`; these run the bare binary without an app bundle.
+`./build.sh` makes a release build wrapped as an ad-hoc signed `CC360Framer.app`. You can also use `swift build` (or `swift build -c release`) and `swift run CC360Framer file.360`; these run the bare binary without an app bundle. The package uses Swift 6 language mode (swift-tools-version 6.0; Xcode 26 or a Swift 6 toolchain).
 
 Run the unit tests with `swift test`.
 

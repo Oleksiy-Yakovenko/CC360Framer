@@ -18,8 +18,7 @@ enum StabTest {
         try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
         defer { try? FileManager.default.removeItem(at: link) }
         let asset = AVURLAsset(url: link)
-        let duration = asset.duration.seconds
-        let videos = asset.tracks(withMediaType: .video)
+        let (duration, videos) = blockingLoad(asset)
         guard videos.count == 2 else { print("need two video tracks"); return 1 }
 
         // Variants: stabiliser configurations plus telemetry time offsets (in frames, fractional allowed).
@@ -128,13 +127,13 @@ enum AnalysisCompare {
         try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
         defer { try? FileManager.default.removeItem(at: link) }
         let asset = AVURLAsset(url: link)
-        let videos = asset.tracks(withMediaType: .video)
+        let (assetSeconds, videos) = blockingLoad(asset)
         let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600), duration: CMTime(seconds: length, preferredTimescale: 600))
-        let stab = Stabilizer(telemetry: telemetry, duration: asset.duration.seconds, mode: .smooth)
+        let stab = Stabilizer(telemetry: telemetry, duration: assetSeconds, mode: .smooth)
         do {
             for (name, s) in [("raw camera frame", Stabilizer?.none), ("level (stabilised)", stab)] {
                 let began = Date()
-                let obs = try Analyzer.run(asset: asset, videoTracks: videos, stabilizer: s, range: range, progress: { _ in }, cancel: CancelFlag())
+                let obs = try Analyzer.run(asset: asset, videoTracks: videos, duration: assetSeconds, stabilizer: s, range: range, progress: { _ in }, cancel: CancelFlag())
                 let withPeople = obs.filter { !$0.people.isEmpty }
                 let top = obs.compactMap { $0.people.max { $0.score < $1.score } }
                 // The rider is rigid with the camera, so its body-frame direction should barely move: spread = stability.
@@ -151,4 +150,18 @@ enum AnalysisCompare {
             return 0
         } catch { print("error: \(error)"); return 1 }
     }
+}
+
+/// Duration (seconds) and video tracks of an asset, loaded synchronously for the blocking CLI tools.
+private func blockingLoad(_ asset: AVURLAsset) -> (Double, [AVAssetTrack]) {
+    nonisolated(unsafe) var result: (Double, [AVAssetTrack]) = (0, [])
+    let done = DispatchSemaphore(value: 0)
+    Task.detached {
+        let d = (try? await asset.load(.duration).seconds) ?? 0
+        let t = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+        result = (d, t)
+        done.signal()
+    }
+    done.wait()
+    return result
 }

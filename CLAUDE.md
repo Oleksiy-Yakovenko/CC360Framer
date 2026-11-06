@@ -1,6 +1,6 @@
 # CC360Framer
 
-macOS app (SwiftPM executable, Swift 5 mode, macOS 14+) that opens GoPro Max 2 `.360` files, plays them with mouse look, auto-reframes around subjects and exports a flat video. See `README.md` for the user-facing description.
+macOS app (SwiftPM executable, Swift 6 language mode (swift-tools-version 6.0, built with Xcode 26 / Swift 6.2), macOS 14+) that opens GoPro Max 2 `.360` files, plays them with mouse look, auto-reframes around subjects and exports a flat video. See `README.md` for the user-facing description.
 
 ## Build, run, CLI
 Build instructions (command line and Xcode), usage and all command-line tools / `CC360_*` environment variables are in `README.md`; keep them there and update them when behaviour changes.
@@ -10,6 +10,12 @@ Notes for working here:
 - Commits end with the `Co-Authored-By` line given by the session. `.gitignore` excludes `.build/`, `*.app`, `*.360`, `*.sidecars/`, `*.project.json` and the legacy `*.reframe.json`, `*.analysis.json`, `*.location.json`.
 - Never do direct UI testing, inspection, accessibility testing or debugging of the running app (launching it to look at windows, screenshots, UI scripting, accessibility inspection). Only do it when the user explicitly asks. Verify with `swift test` and the headless CLI tools in `README.md` instead.
 - Never write into the user's footage folder (`~/Movies/GoPro/...`); symlink the video and copy the `CC360Framer.sidecars` folder into the scratchpad next to the symlink (sidecars resolve relative to the unresolved path, so batch/CLI runs write only there).
+
+## Concurrency conventions (Swift 6 mode, no `-swift-version 5`)
+- UI and model types are `@MainActor` (view controllers, `PlayerModel`, `Kit`). Callbacks that AppKit/AVFoundation/Combine deliver on the main thread but declare nonisolated (Combine `.sink` after `.receive(on: RunLoop.main)`, `addPeriodicTimeObserver(queue: .main)`, `NotificationCenter` with `queue: .main`, the Metal `preDraw`) use `MainActor.assumeIsolated`; this traps if the callback is ever moved off the main thread.
+- Blocking work (`Exporter`, `Analyzer`, `CutExport`) runs in `Task.detached` or on dispatch queues. Non-Sendable AVFoundation/Metal/CoreVideo objects crossing into those closures use `UncheckedBox` or a local `nonisolated(unsafe) let`, each with a comment saying which single queue touches the object. Do not add them elsewhere as a shortcut: prefer `Sendable` value types, `@MainActor`, or a lock-guarded class (`CancelFlag`, `Pacing`).
+- Progress callbacks are `@Sendable`; hop to the main actor with `Task { @MainActor in ... }`.
+- Verify runtime isolation (not only compile errors): run a `CC360_BATCH` export and `--batch-run` through the built `.app` binary, since Swift 6 inserts isolation assertions that the compiler cannot show.
 
 ## Architecture (`Sources/CC360Framer/`)
 Folders: `App/` (`main.swift`, `App.swift`), `UI/` (view controllers, `ViewKit.swift`), `Model/` (`PlayerModel.swift`), `Media/` (`StackCompositor`, `Telemetry`, `Stabilizer`), `Rendering/` (`Renderer`, `Projection`, `LocationOverlay`), `Reframing/` (`Analyzer`, `Styles`, `CameraPath`), `Export/` (`Exporter`), `Diagnostics/` (`Snapshot`, `StabTest`, `Pacing`). Files are referenced below by name only.

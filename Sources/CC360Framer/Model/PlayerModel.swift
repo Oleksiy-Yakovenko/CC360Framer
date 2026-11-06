@@ -520,10 +520,11 @@ extension PlayerModel {
         job = flag
         analysisProgress = 0
         statusText = "Analysing…"
+        let assetDuration = duration
         let box = UncheckedBox((asset, tracks, stabilizer))
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, stabilizer: box.value.2, progress: { p in
+                let found = try Analyzer.run(asset: box.value.0, videoTracks: box.value.1, duration: assetDuration, stabilizer: box.value.2, progress: { p in
                     Task { @MainActor in self?.analysisProgress = p }
                 }, cancel: flag)
                 await MainActor.run {
