@@ -75,3 +75,22 @@ final class StylesTests: XCTestCase {
         XCTAssertLessThanOrEqual(shots, 2)
     }
 }
+
+final class SceneryForwardTests: XCTestCase {
+    func testForwardShotsUseTheGivenYaw() {
+        let straight = SceneryPlanner.plan([], duration: 30)
+        XCTAssertTrue(straight.allSatisfy { $0.yaw == 0 })
+        let aimed = SceneryPlanner.plan([], duration: 30, forwardYaw: { t in t < 10 ? 0.5 : -0.25 })
+        XCTAssertEqual(aimed.count, straight.count)
+        XCTAssertTrue(aimed.filter { $0.t < 10 }.allSatisfy { $0.yaw == 0.5 })
+        XCTAssertTrue(aimed.filter { $0.t >= 10 }.allSatisfy { $0.yaw == -0.25 })
+    }
+
+    func testKeyframesAimAtTravelDirection() {
+        let keys = PathStyle.scenery.keyframes(from: [], duration: 30, fov: 70, forwardYaw: { _ in 0.6 })
+        XCTAssertFalse(keys.isEmpty)
+        XCTAssertTrue(keys.allSatisfy { abs($0.yaw - 0.6) < 0.01 })
+        // Follow style ignores it.
+        XCTAssertTrue(PathStyle.follow.keyframes(from: [], duration: 30, fov: 70, forwardYaw: { _ in 0.6 }).isEmpty)
+    }
+}

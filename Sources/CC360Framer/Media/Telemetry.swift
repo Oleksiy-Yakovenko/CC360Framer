@@ -30,6 +30,33 @@ struct Telemetry {
         var altitude: Double?
     }
 
+    /// One accelerometer reading: the three `ACCL` channels in m/s^2 exactly as stored (channel order is the camera's
+    /// `ORIN`, not x/y/z; `TravelDirection` maps them to render axes), at `t` seconds from the start of the clip.
+    struct AccelSample: Equatable {
+        var t: Double
+        var channels: SIMD3<Float>
+    }
+
+    /// One GPS fix of the full series (about 10 Hz), with the receiver quality.
+    struct GPSSample: Equatable {
+        var t: Double
+        var latitude: Double
+        var longitude: Double
+        /// Ground speed in m/s.
+        var speed2D: Double
+        /// 0 = none, 2 = 2D, 3 = 3D.
+        var fix: Int
+        /// Dilution of precision (99.99 while unlocked).
+        var dop: Double
+        /// Locked with a trustworthy geometry (the first rows of a clip are often unlocked with dop ~ 99).
+        var isUsable: Bool { fix >= 2 && dop < 5 }
+    }
+
+    /// ~197 Hz accelerometer series; sample times follow the `gpmd` packet timing.
+    var accel: [AccelSample] = []
+    /// Every GPS fix of the clip (GPS9, or GPS5 on older cameras), unlike `gps` which is only the first lock.
+    var gpsSeries: [GPSSample] = []
+
     var count: Int { min(orientation.count, gravity.count) }
 
     /// nil when the file has no usable telemetry.
@@ -38,9 +65,9 @@ struct Telemetry {
         defer { try? fh.close() }
         guard let moov = readMoov(fh), let samples = gpmdSamples(moov) else { return nil }
         var t = Telemetry(orientation: [], gravity: [], imageOrientation: [])
-        for (offset, size) in samples {
-            guard (try? fh.seek(toOffset: offset)) != nil, let data = try? fh.read(upToCount: size), data.count == size else { continue }
-            parseGPMF([UInt8](data), into: &t)
+        for p in samples {
+            guard (try? fh.seek(toOffset: p.offset)) != nil, let data = try? fh.read(upToCount: p.size), data.count == p.size else { continue }
+            parseGPMF([UInt8](data), into: &t, start: p.start, span: p.span)
         }
         t.settleAltitude()
         return t.count > 0 ? t : nil
@@ -95,8 +122,11 @@ struct Telemetry {
         return nil
     }
 
-    /// (file offset, size) of every sample of the `gpmd` track.
-    private static func gpmdSamples(_ moov: [UInt8]) -> [(UInt64, Int)]? {
+    /// One `gpmd` packet: where it is in the file and which stretch of the clip (seconds) it covers.
+    private struct Packet { var offset: UInt64; var size: Int; var start: Double; var span: Double }
+
+    /// Every sample (packet) of the `gpmd` track with its timing from `stts` and the `mdhd` time scale.
+    private static func gpmdSamples(_ moov: [UInt8]) -> [Packet]? {
         func child(_ parent: Range<Int>, _ type: String) -> Atom? { atoms(moov, parent).first { $0.type == type } }
         for trak in atoms(moov, 0..<moov.count) where trak.type == "trak" {
             guard let mdia = child(trak.payload, "mdia"), let minf = child(mdia.payload, "minf"),
@@ -122,13 +152,37 @@ struct Telemetry {
             o += 4
             let offsets: [UInt64] = (0..<chunks).map { co64 != nil && stco.type == "co64" ? be64(moov, o + $0 * 8) : UInt64(be32(moov, o + $0 * 4)) }
 
-            var out: [(UInt64, Int)] = []
+            // Packet timing: durations from stts in media time units (1 s packets when the box is missing).
+            var scale = 1000.0
+            if let mdhd = child(mdia.payload, "mdhd"), mdhd.payload.count >= 24 {
+                let at = mdhd.payload.lowerBound
+                scale = Double(be32(moov, at + (moov[at] == 1 ? 20 : 12)))
+            }
+            var durations: [Double] = []
+            if let stts = child(stbl.payload, "stts"), stts.payload.count >= 8 {
+                let base = stts.payload.lowerBound + 4
+                let count = min(be32(moov, base), (stts.payload.count - 8) / 8)
+                for e in 0..<count {
+                    let n = be32(moov, base + 4 + e * 8), delta = be32(moov, base + 8 + e * 8)
+                    durations.append(contentsOf: [Double](repeating: Double(delta) / max(scale, 1), count: min(n, sizes.count)))
+                    if durations.count >= sizes.count { break }
+                }
+            }
+            var starts: [Double] = []
+            var clock = 0.0
+            for i in 0..<sizes.count {
+                starts.append(clock)
+                clock += i < durations.count ? durations[i] : 1
+            }
+
+            var out: [Packet] = []
             var sample = 0
             for (ci, chunkOffset) in offsets.enumerated() {
                 let per = runs.last { $0.first <= ci + 1 }?.per ?? 1
                 var off = chunkOffset
                 for _ in 0..<per where sample < sizes.count {
-                    out.append((off, sizes[sample]))
+                    out.append(Packet(offset: off, size: sizes[sample], start: starts[sample],
+                                      span: sample < durations.count ? durations[sample] : 1))
                     off += UInt64(sizes[sample])
                     sample += 1
                 }
@@ -191,13 +245,48 @@ struct Telemetry {
         }
     }
 
-    static func parseGPMF(_ b: [UInt8], into t: inout Telemetry) {
+    /// Series samples of one stream are spread evenly over the packet (`start`, `span` in seconds from the clip start).
+    private static func sampleTime(_ i: Int, of n: Int, start: Double, span: Double) -> Double {
+        start + (Double(i) + 0.5) / Double(max(n, 1)) * span
+    }
+
+    private static func uint16(_ b: [UInt8], _ o: Int) -> Int { Int(b[o]) << 8 | Int(b[o + 1]) }
+
+    /// Appends the whole GPS series of a packet: `GPS9` (lat, lon, alt, speed2d, speed3d, days, secs, dop, fix) or
+    /// `GPS5` (lat, lon, alt, speed2d, speed3d with `GPSF`/`GPSP` for the packet).
+    private static func parseGPSSeries(_ b: [UInt8], _ items: [KLV], into t: inout Telemetry, start: Double, span: Double) {
+        guard let scal = items.first(where: { $0.key == "SCAL" }), scal.type == UInt8(ascii: "l") else { return }
+        let scales = (0..<scal.repeats).map { Double(int32(b, scal.data.lowerBound + $0 * 4)) }
+        guard scales.count >= 4 else { return }
+        let packetFix = items.first { $0.key == "GPSF" }.map { Int(int32(b, $0.data.lowerBound)) } ?? 3
+        let packetDop = items.first { $0.key == "GPSP" }.map { Double(uint16(b, $0.data.lowerBound)) / 100 } ?? 0
+        for k in items where (k.key == "GPS9" && k.size >= 32) || (k.key == "GPS5" && k.size >= 20) {
+            for i in 0..<k.repeats {
+                let o = k.data.lowerBound + i * k.size
+                var fix = packetFix, dop = packetDop
+                if k.key == "GPS9" { dop = Double(uint16(b, o + 28)) / max(scales.count > 7 ? scales[7] : 100, 1); fix = uint16(b, o + 30) }
+                t.gpsSeries.append(GPSSample(t: sampleTime(i, of: k.repeats, start: start, span: span),
+                                             latitude: Double(int32(b, o)) / max(scales[0], 1), longitude: Double(int32(b, o + 4)) / max(scales[1], 1),
+                                             speed2D: Double(int32(b, o + 12)) / max(scales[3], 1), fix: fix, dop: dop))
+            }
+        }
+    }
+
+    /// Parses one `gpmd` packet. `start`/`span` (seconds) place the time series (ACCL, GPS) in the clip.
+    static func parseGPMF(_ b: [UInt8], into t: inout Telemetry, start: Double = 0, span: Double = 0) {
         for devc in klvs(b, 0..<b.count) where devc.key == "DEVC" {
             for strm in klvs(b, devc.data) where strm.key == "STRM" {
                 let items = klvs(b, strm.data)
                 parseGPS(b, items, into: &t)
+                parseGPSSeries(b, items, into: &t, start: start, span: span)
                 guard let scal = items.first(where: { $0.key == "SCAL" }) else { continue }
                 let scale = max(int16s(b, scal, 0, 1)[0], 1)
+                for k in items where k.key == "ACCL" && k.type == UInt8(ascii: "s") && k.size >= 6 {
+                    for i in 0..<k.repeats {
+                        let v = int16s(b, k, i, 3).map { $0 / scale }
+                        t.accel.append(AccelSample(t: sampleTime(i, of: k.repeats, start: start, span: span), channels: SIMD3(v[0], v[1], v[2])))
+                    }
+                }
                 for k in items where (k.key == "CORI" || k.key == "GRAV" || k.key == "IORI") && k.type == UInt8(ascii: "s") {
                     for i in 0..<k.repeats {
                         let v = int16s(b, k, i, k.size / 2).map { $0 / scale }

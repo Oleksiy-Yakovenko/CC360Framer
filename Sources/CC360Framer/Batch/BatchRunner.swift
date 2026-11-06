@@ -52,6 +52,7 @@ final class BatchRunner: ObservableObject {
             options.forceReanalyse = settings.forceReanalyse
             options.export = settings.export
             options.style = settings.style
+            options.forwardMode = settings.forwardMode
             options.analysisQuality = settings.analysisQuality
             options.exportSettings = settings.exportSettings
             var output: URL?

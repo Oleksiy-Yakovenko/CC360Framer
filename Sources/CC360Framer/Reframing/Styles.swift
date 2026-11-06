@@ -9,7 +9,9 @@ enum PathStyle: String, CaseIterable, Identifiable {
     /// The camera only follows people and objects that stay detected for at least this long (seconds).
     static let minTrackDuration = 2.0
 
-    func keyframes(from allObs: [Observation], duration: Double, fov: Float) -> [Keyframe] {
+    /// `forwardYaw` (scenery only) gives the yaw of the direction of travel in the path's own (stabilised) frame at a time;
+    /// nil = straight ahead of the camera.
+    func keyframes(from allObs: [Observation], duration: Double, fov: Float, forwardYaw: ((Double) -> Float)? = nil) -> [Keyframe] {
         // Single entry point for both styles: drop short-lived detections (see DetectionTracks.filter
         // for the clip-boundary rule: strict per track, but clips shorter than the minimum are left alone).
         let obs = DetectionTracks.filter(allObs, minDuration: Self.minTrackDuration, clipDuration: duration)
@@ -17,7 +19,7 @@ enum PathStyle: String, CaseIterable, Identifiable {
         case .follow:
             return PathBuilder.build(samples: Self.followSamples(obs), duration: duration, fov: fov)
         case .scenery:
-            return PathBuilder.build(samples: SceneryPlanner.plan(obs, duration: duration),
+            return PathBuilder.build(samples: SceneryPlanner.plan(obs, duration: duration, forwardYaw: forwardYaw),
                                      duration: duration, fov: fov, params: .scenery)
         }
     }
@@ -44,8 +46,8 @@ func continuityWeight(_ c: Candidate, _ prev: (yaw: Float, pitch: Float)?) -> Fl
 }
 
 /// Looks forward along the direction of travel, glances at interesting objects on the sides,
-/// and now and then swings round to show the rider. Camera "forward" is yaw 0 (the camera is
-/// fixed to the bike), and the rider is found as the typical person direction.
+/// and now and then swings round to show the rider. "Forward" is the direction of travel when the caller
+/// gives one (`forwardYaw`, see `TravelDirection`), else yaw 0 (the camera is fixed to the bike); the rider is found as the typical person direction.
 enum SceneryPlanner {
     private enum Kind { case forward, side, rider }
     /// Shot rotation with nominal lengths in seconds: mostly road, a glance every other shot.
@@ -61,7 +63,7 @@ enum SceneryPlanner {
     private static let closeFov: Float = 55
     private static let sideRange: ClosedRange<Float> = (35 * .pi / 180)...(145 * .pi / 180)
 
-    static func plan(_ obs: [Observation], duration: Double) -> [Sample] {
+    static func plan(_ obs: [Observation], duration: Double, forwardYaw: ((Double) -> Float)? = nil) -> [Sample] {
         var byIndex: [Int: Observation] = [:]
         for o in obs { byIndex[Int((o.t / dt).rounded())] = o }
         let rider = riderReference(obs)
@@ -90,15 +92,15 @@ enum SceneryPlanner {
             case .forward:
                 break
             }
-            samples += made.isEmpty ? forwardShot(i..<end) : made
+            samples += made.isEmpty ? forwardShot(i..<end, forwardYaw) : made
             i = end
             shot += 1
         }
         return samples
     }
 
-    private static func forwardShot(_ r: Range<Int>) -> [Sample] {
-        r.map { Sample(t: Double($0) * dt, yaw: 0, pitch: 0, weight: 1, fov: forwardFov) }
+    private static func forwardShot(_ r: Range<Int>, _ forwardYaw: ((Double) -> Float)?) -> [Sample] {
+        r.map { Sample(t: Double($0) * dt, yaw: forwardYaw?(Double($0) * dt) ?? 0, pitch: 0, weight: 1, fov: forwardFov) }
     }
 
     private static func riderShot(_ obs: [Int: Observation], _ r: Range<Int>, ref: (yaw: Float, pitch: Float)) -> [Sample] {

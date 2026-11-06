@@ -11,6 +11,7 @@ final class LeftSidebarViewController: ModelViewController {
     private let detectionsCheck = NSButton(checkboxWithTitle: "Display detected subjects", target: nil, action: nil)
     private var qualityPopup = NSPopUpButton()
     private var stylePopup = NSPopUpButton()
+    private var forwardPopup = NSPopUpButton()
     private var stabilizePopup = NSPopUpButton()
 
     override func loadView() {
@@ -33,6 +34,7 @@ final class LeftSidebarViewController: ModelViewController {
 
         qualityPopup = Kit.popup(AnalysisQuality.allCases.map(\.rawValue), tip: AnalysisQuality.popupTip, target: self, action: #selector(qualityChosen))
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "How the camera path is generated", target: self, action: #selector(styleChosen))
+        forwardPopup = Kit.popup(TravelDirection.ForwardMode.allCases.map(\.title), tip: "Where the Scenery shots that look straight ahead are aimed: along the direction of travel (found from the accelerometer and GPS; needs movement and GPS) or straight ahead of the camera.", target: self, action: #selector(forwardChosen))
         stabilizePopup = Kit.popup(StabilizeMode.allCases.map(\.rawValue), tip: "Horizon lock and shake removal from the camera's motion data", target: self, action: #selector(stabilizeChosen))
 
         detectionsCheck.target = self
@@ -47,10 +49,10 @@ final class LeftSidebarViewController: ModelViewController {
         let stack = Kit.sidebarStack(in: view, [
             autoTitle, autoButton,
             analysisTitle, qualityPopup, progress, cancelButton, analyseButton, buildButton, reanalyseButton, detectionsCheck,
-            pathTitle, stylePopup,
+            pathTitle, stylePopup, forwardPopup,
             stabTitle, stabilizePopup,
         ])
-        for v in [autoButton, reanalyseButton, detectionsCheck, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
+        for v in [autoButton, reanalyseButton, detectionsCheck, forwardPopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
         stack.setCustomSpacing(6, after: qualityPopup)
         stack.setCustomSpacing(18, after: analyseButton)
         stack.setCustomSpacing(18, after: buildButton)
@@ -76,6 +78,10 @@ final class LeftSidebarViewController: ModelViewController {
         qualityPopup.selectItem(at: AnalysisQuality.allCases.firstIndex(of: model.analysisQuality) ?? 0)
         qualityPopup.isEnabled = busy == nil
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: model.style) ?? 0)
+        let travel = model.travelEstimate?.isUsable == true
+        forwardPopup.selectItem(at: TravelDirection.ForwardMode.allCases.firstIndex(of: travel ? model.forwardMode : .cameraFront) ?? 0)
+        forwardPopup.isEnabled = travel && model.style == .scenery
+        forwardPopup.toolTip = "Where the Scenery shots that look straight ahead are aimed: along the direction of travel (accelerometer and GPS; needs movement and GPS) or straight ahead of the camera. Used by the Scenery style only. " + model.forwardNote
         stabilizePopup.selectItem(at: StabilizeMode.allCases.firstIndex(of: model.stabilization) ?? 0)
     }
 
@@ -104,6 +110,10 @@ final class LeftSidebarViewController: ModelViewController {
     @objc private func styleChosen() {
         model.style = PathStyle.allCases[stylePopup.indexOfSelectedItem]
         model.styleChanged()
+    }
+
+    @objc private func forwardChosen() {
+        model.setForwardMode(TravelDirection.ForwardMode.allCases[max(forwardPopup.indexOfSelectedItem, 0)])
     }
 
     @objc private func stabilizeChosen() {

@@ -8,6 +8,7 @@ enum BatchJob {
         var forceReanalyse = false
         var export = true
         var style: PathStyle = .follow
+        var forwardMode: TravelDirection.ForwardMode = .travelDirection
         var analysisQuality: AnalysisQuality = .fast
         var exportSettings = ExportSettings()
     }
@@ -61,7 +62,10 @@ enum BatchJob {
         progress(.building)
         var keys = existingKeys
         if options.forceReanalyse || keys.isEmpty {
-            let built = options.style.keyframes(from: virtualObservations(observations, stabilizer: stabilizer), duration: duration, fov: 70)
+            let travel = telemetry.flatMap { TravelDirection.estimate(telemetry: $0, duration: duration) }
+            let forward = TravelDirection.forwardYaw(mode: options.forwardMode, estimate: travel, stabilizer: stabilizer)
+            log("forward: \(travel.map(\.summary) ?? "no estimate (camera front)")")
+            let built = options.style.keyframes(from: virtualObservations(observations, stabilizer: stabilizer), duration: duration, fov: 70, forwardYaw: forward)
             if !built.isEmpty {
                 keys = built
                 let enc = JSONEncoder()

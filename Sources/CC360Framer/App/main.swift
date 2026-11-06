@@ -9,6 +9,9 @@ if args.first == "--telemetry", args.count > 1 {
     print("last  q: \(t.orientation[t.count - 1])  g: \(t.gravity[t.count - 1])")
     exit(0)
 }
+if args.first == "--travel-direction", args.count > 1 {
+    exit(TravelDirectionCLI.run(url: URL(fileURLWithPath: args[1])))
+}
 if args.first == "--analysis-compare" {
     exit(AnalysisCompare.run(args: Array(args.dropFirst())))
 }
