@@ -54,7 +54,7 @@ struct PlaceInfo: Codable, Equatable {
 }
 
 /// Where the card sits in the frame; also sets the text alignment inside the card.
-enum OverlayPlacement: String, CaseIterable, Identifiable {
+enum OverlayPlacement: String, CaseIterable, Identifiable, Codable {
     case topLeft = "Top left", topCenter = "Top centre", topRight = "Top right"
     case center = "Centre"
     case bottomLeft = "Bottom left", bottomCenter = "Bottom centre", bottomRight = "Bottom right"
@@ -73,6 +73,63 @@ enum OverlayPlacement: String, CaseIterable, Identifiable {
     }
 }
 
+/// sRGB colour that can be stored in JSON.
+struct CardColor: Codable, Equatable {
+    var r, g, b, a: Double
+
+    init(r: Double, g: Double, b: Double, a: Double = 1) { self.r = r; self.g = g; self.b = b; self.a = a }
+
+    init(_ c: NSColor) {
+        let s = c.usingColorSpace(.sRGB) ?? c
+        self.init(r: Double(s.redComponent), g: Double(s.greenComponent), b: Double(s.blueComponent), a: Double(s.alphaComponent))
+    }
+
+    var nsColor: NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: a) }
+}
+
+/// Look of the location card. The defaults reproduce the original card: system font, 64 pt headline, white text,
+/// a soft black shadow and no outline.
+struct LocationCardStyle: Codable, Equatable {
+    static let defaultBaseSize = 64.0
+
+    /// Font family; nil = the system font.
+    var fontName: String?
+    /// Size of the first line in points; the other lines scale with it (44/64 and 34/64 of it).
+    var baseSize: Double
+    var fill: CardColor
+    var stroke: CardColor
+    /// Outline width in points (0 = none).
+    var strokeWidth: Double
+
+    init(fontName: String? = nil, baseSize: Double = LocationCardStyle.defaultBaseSize,
+         fill: CardColor = CardColor(r: 1, g: 1, b: 1), stroke: CardColor = CardColor(r: 0, g: 0, b: 0), strokeWidth: Double = 0) {
+        self.fontName = fontName; self.baseSize = baseSize; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth
+    }
+
+    /// Missing keys fall back to the defaults, so older or hand-edited files keep loading.
+    init(from decoder: Decoder) throws {
+        let d = LocationCardStyle()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
+        baseSize = try c.decodeIfPresent(Double.self, forKey: .baseSize) ?? d.baseSize
+        fill = try c.decodeIfPresent(CardColor.self, forKey: .fill) ?? d.fill
+        stroke = try c.decodeIfPresent(CardColor.self, forKey: .stroke) ?? d.stroke
+        strokeWidth = try c.decodeIfPresent(Double.self, forKey: .strokeWidth) ?? d.strokeWidth
+    }
+
+    /// Point sizes of the lines: headline, second line, then the details.
+    func sizes(lineCount: Int) -> [CGFloat] {
+        let k = CGFloat(baseSize / Self.defaultBaseSize)
+        return lineCount >= 3 ? [64 * k, 44 * k] + Array(repeating: 34 * k, count: lineCount - 2)
+                              : Array(repeating: 44 * k, count: lineCount)
+    }
+
+    func font(size: CGFloat, bold: Bool) -> NSFont {
+        if let fontName, let f = NSFontManager.shared.font(withFamily: fontName, traits: bold ? .boldFontMask : [], weight: bold ? 9 : 5, size: size) { return f }
+        return .systemFont(ofSize: size, weight: bold ? .bold : .regular)
+    }
+}
+
 /// Title card shown at the start of the clip, drawn once into a bitmap and composited by the renderer.
 enum LocationOverlay {
     static let visibleSeconds = 10.0
@@ -84,18 +141,24 @@ enum LocationOverlay {
         return Float(max(0, min(1, min(t / fade, (visibleSeconds - t) / fade))))
     }
 
-    static func image(for info: PlaceInfo, placement: OverlayPlacement) -> CGImage? {
+    static func image(for info: PlaceInfo, placement: OverlayPlacement, style: LocationCardStyle = LocationCardStyle()) -> CGImage? {
         let lines = info.lines
-        let sizes: [CGFloat] = lines.count >= 3 ? [64, 44] + Array(repeating: 34, count: lines.count - 2) : Array(repeating: 44, count: lines.count)
+        let sizes = style.sizes(lineCount: lines.count)
         let detailStart = lines.count - (info.altitude != nil ? 2 : 1)
         let attributed = zip(lines, sizes).enumerated().map { i, pair -> NSAttributedString in
             let (text, size) = pair
-            let font = NSFont.systemFont(ofSize: size, weight: i == 0 ? .bold : .regular)
+            let font = style.font(size: size, bold: i == 0)
             let shadow = NSShadow()
             shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
             shadow.shadowBlurRadius = 8
             shadow.shadowOffset = .zero
-            return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(i >= detailStart ? 0.85 : 1), .shadow: shadow])
+            var attrs: [NSAttributedString.Key: Any] = [.font: font, .shadow: shadow,
+                .foregroundColor: style.fill.nsColor.withAlphaComponent(CGFloat(style.fill.a) * (i >= detailStart ? 0.85 : 1))]
+            if style.strokeWidth > 0 {
+                attrs[.strokeColor] = style.stroke.nsColor
+                attrs[.strokeWidth] = -style.strokeWidth / size * 100   // negative = stroke and fill
+            }
+            return NSAttributedString(string: text, attributes: attrs)
         }
         let pad: CGFloat = 24, gap: CGFloat = 8
         let widths = attributed.map { ceil($0.size().width) }

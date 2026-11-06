@@ -143,7 +143,7 @@ enum Kit {
             addSubview(segmented)
             addSubview(content)
             NSLayoutConstraint.activate([
-                segmented.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+                segmented.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 12),
                 segmented.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
                 segmented.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
                 content.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 8),

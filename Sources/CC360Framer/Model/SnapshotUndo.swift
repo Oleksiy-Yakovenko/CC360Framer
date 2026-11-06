@@ -4,14 +4,15 @@ import Foundation
 /// registers the inverse, so redo works. Pure Foundation, no UI, so it is unit-testable.
 @MainActor
 final class SnapshotUndo<State> {
-    let manager = UndoManager()
+    let manager: UndoManager
     private let capture: () -> State
     private let restore: (State) -> Void
 
     /// - Parameters:
     ///   - capture: reads the current state.
     ///   - restore: writes a state back (called by undo and redo; should also persist).
-    init(capture: @escaping () -> State, restore: @escaping (State) -> Void) {
+    init(manager: UndoManager = UndoManager(), capture: @escaping () -> State, restore: @escaping (State) -> Void) {
+        self.manager = manager
         self.capture = capture
         self.restore = restore
         manager.groupsByEvent = false

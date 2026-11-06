@@ -1,6 +1,6 @@
 import AppKit
 
-/// Left sidebar: Auto, analysis, camera path style, stabilisation and location card placement.
+/// Left sidebar: Auto, analysis, camera path style and stabilisation.
 final class LeftSidebarViewController: ModelViewController {
     private let autoButton = NSButton()
     private let progress = NSProgressIndicator()
@@ -10,7 +10,6 @@ final class LeftSidebarViewController: ModelViewController {
     private var reanalyseButton = NSButton()
     private var stylePopup = NSPopUpButton()
     private var stabilizePopup = NSPopUpButton()
-    private var locationPopup = NSPopUpButton()
 
     override func loadView() {
         view = NSView()
@@ -32,20 +31,17 @@ final class LeftSidebarViewController: ModelViewController {
 
         stylePopup = Kit.popup(PathStyle.allCases.map(\.rawValue), tip: "How the camera path is generated", target: self, action: #selector(styleChosen))
         stabilizePopup = Kit.popup(StabilizeMode.allCases.map(\.rawValue), tip: "Horizon lock and shake removal from the camera's motion data", target: self, action: #selector(stabilizeChosen))
-        locationPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where the location card (first 10 s) is placed, in preview and export", target: self, action: #selector(locationChosen))
 
         let autoTitle = Kit.title("Auto", tip: "Follow the camera path: the view tracks the keyframes at the playhead.")
         let analysisTitle = Kit.title("Analysis", tip: "Detects people and objects; needed to build a camera path.")
         let pathTitle = Kit.title("Camera path", tip: "How the path is generated from the detections.")
         let stabTitle = Kit.title("Stabilise", tip: "Horizon lock and shake removal from the camera's motion data.")
-        let locTitle = Kit.title("Location card", tip: "Where the place-name card (first 10 s) is placed, in preview and export.")
 
         let stack = Kit.sidebarStack(in: view, [
             autoTitle, autoButton,
             analysisTitle, progress, cancelButton, analyseButton, buildButton, reanalyseButton,
             pathTitle, stylePopup,
             stabTitle, stabilizePopup,
-            locTitle, locationPopup,
         ])
         for v in [autoButton, reanalyseButton, stylePopup, stabilizePopup] { stack.setCustomSpacing(18, after: v) }
         stack.setCustomSpacing(18, after: analyseButton)
@@ -68,7 +64,6 @@ final class LeftSidebarViewController: ModelViewController {
 
         stylePopup.selectItem(at: PathStyle.allCases.firstIndex(of: model.style) ?? 0)
         stabilizePopup.selectItem(at: StabilizeMode.allCases.firstIndex(of: model.stabilization) ?? 0)
-        locationPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: model.overlayPlacement) ?? 0)
     }
 
     @objc private func autoToggled() { model.autoFollow = autoButton.state == .on && !model.keyframes.isEmpty }
@@ -96,9 +91,5 @@ final class LeftSidebarViewController: ModelViewController {
     @objc private func stabilizeChosen() {
         model.stabilization = StabilizeMode.allCases[stabilizePopup.indexOfSelectedItem]
         model.stabilizationChanged()
-    }
-
-    @objc private func locationChosen() {
-        model.overlayPlacement = OverlayPlacement.allCases[locationPopup.indexOfSelectedItem]
     }
 }

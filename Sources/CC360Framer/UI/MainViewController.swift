@@ -75,7 +75,7 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         let middle = NSSplitViewItem(viewController: center)
         middle.minimumThickness = 420
         inspectorItem = NSSplitViewItem(inspectorWithViewController: RightSidebarViewController(model: model))
-        inspectorItem.minimumThickness = 160
+        inspectorItem.minimumThickness = 280
         inspectorItem.maximumThickness = 360
         super.init(nibName: nil, bundle: nil)
         let split = DropSplitView()

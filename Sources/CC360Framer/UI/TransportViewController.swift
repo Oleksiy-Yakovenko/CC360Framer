@@ -50,15 +50,13 @@ final class KeyTicksView: NSView {
     }
 }
 
-/// Play button, position, seekbar with keyframe ticks, duration and the audio track toggles.
+/// Play button, position, seekbar with keyframe ticks, duration.
 final class TransportViewController: ModelViewController {
     private var playButton = NSButton()
     private let positionLabel = NSTextField(labelWithString: "0:00")
     private let durationLabel = NSTextField(labelWithString: "0:00")
     private let slider = ScrubSlider()
     private let ticks = KeyTicksView()
-    private let audioStack = NSStackView()
-    private var builtAudio: [String] = []
     private var dragging = false
 
     override func loadView() {
@@ -88,10 +86,7 @@ final class TransportViewController: ModelViewController {
         seek.spacing = 0
         seek.setHuggingPriority(.defaultLow, for: .horizontal)
 
-        audioStack.orientation = .horizontal
-        audioStack.spacing = 4
-
-        let row = NSStackView(views: [playButton, positionLabel, seek, durationLabel, audioStack])
+        let row = NSStackView(views: [playButton, positionLabel, seek, durationLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
@@ -115,30 +110,8 @@ final class TransportViewController: ModelViewController {
         ticks.selected = model.selectedKey
         ticks.duration = model.duration
         ticks.needsDisplay = true
-        refreshAudio()
-    }
-
-    private func refreshAudio() {
-        let ids = model.audioOptions.map { "\($0.id):\($0.label)" }
-        if ids != builtAudio {
-            builtAudio = ids
-            audioStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            if !model.audioOptions.isEmpty {
-                audioStack.addArrangedSubview(NSImageView(image: Kit.symbol("speaker.wave.2", "Audio tracks")))
-                for opt in model.audioOptions {
-                    let b = Kit.button(opt.label, tip: "Include this audio track", target: self, action: #selector(audioToggled(_:)))
-                    b.setButtonType(.pushOnPushOff)
-                    b.tag = Int(opt.id)
-                    audioStack.addArrangedSubview(b)
-                }
-            }
-        }
-        for case let b as NSButton in audioStack.arrangedSubviews {
-            b.state = model.audioOptions.first { Int($0.id) == b.tag }?.enabled == true ? .on : .off
-        }
     }
 
     @objc private func togglePlay() { model.togglePlay() }
     @objc private func scrubbed() { model.scrub(to: slider.doubleValue) }
-    @objc private func audioToggled(_ sender: NSButton) { model.toggleAudio(CMPersistentTrackID(sender.tag)) }
 }

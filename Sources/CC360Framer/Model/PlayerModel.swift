@@ -74,16 +74,82 @@ final class PlayerModel: ObservableObject {
     var onOverlay: ((CGImage?) -> Void)?
     @Published var overlayPlacement: OverlayPlacement = OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft {
         didSet {
-            UserDefaults.standard.set(overlayPlacement.rawValue, forKey: "overlayPlacement")
+            if !loadingProject { UserDefaults.standard.set(overlayPlacement.rawValue, forKey: "overlayPlacement") }
             if overlayPlacement != oldValue, !restoringPlacement {
                 let old = oldValue
                 registerPlacementUndo(old)
             }
             viewState.overlayPlacement = overlayPlacement
-            if let place { setOverlay(LocationOverlay.image(for: place, placement: overlayPlacement)) }
+            rebuildCard()
+            if overlayPlacement != oldValue { saveProject() }
         }
     }
     private var restoringPlacement = false
+
+    /// Look of the location card; per file, saved in the project sidecar.
+    @Published private(set) var cardStyle = LocationCardStyle()
+    private var loadingProject = false
+    private var lastCardEdit: (name: String, at: Date)?
+    private(set) lazy var cardUndo = SnapshotUndo<LocationCardStyle>(
+        manager: undo.manager,
+        capture: { [unowned self] in cardStyle },
+        restore: { [unowned self] s in
+            cardStyle = s
+            rebuildCard()
+            saveProject()
+        })
+
+    /// Changes the card style (undoable, saved, preview and export update). Repeated edits of the same control within a
+    /// second (colour well drags, sliders) collapse into one undo step.
+    func setCardStyle(_ new: LocationCardStyle, name: String = "Change Location Card") {
+        guard new != cardStyle else { return }
+        let before = cardStyle
+        cardStyle = new
+        rebuildCard()
+        saveProject()
+        let now = Date()
+        if let last = lastCardEdit, last.name == name, now.timeIntervalSince(last.at) < 1 { lastCardEdit = (name, now); return }
+        lastCardEdit = (name, now)
+        cardUndo.register(before, name)
+    }
+
+    private func rebuildCard() {
+        if let place { setOverlay(LocationOverlay.image(for: place, placement: overlayPlacement, style: cardStyle)) }
+    }
+
+    private func loadProject(for url: URL) {
+        let proj = ProjectSidecar.load(for: url)
+        loadingProject = true
+        cardStyle = proj.locationStyle ?? LocationCardStyle()
+        restoringPlacement = true
+        overlayPlacement = proj.locationPlacement
+            ?? OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft
+        restoringPlacement = false
+        loadingProject = false
+    }
+
+    func saveProject() {
+        guard !loadingProject, let sourceURL else { return }
+        ProjectSidecar(locationStyle: cardStyle, locationPlacement: overlayPlacement).save(for: sourceURL)
+    }
+
+    var selectedKeyframe: Keyframe? { selectedKey.flatMap { id in keyframes.first { $0.id == id } } }
+
+    /// Applies Inspector edits to the selected keyframe (undoable). Invalid edits leave everything as it was.
+    func editSelectedKey(_ values: KeyframeEdit.Values) {
+        guard let id = selectedKey, let old = selectedKeyframe else { return }
+        guard let new = KeyframeEdit.apply(keyframes, id: id, values, duration: duration) else {
+            objectWillChange.send()   // let the fields snap back to the stored values
+            return
+        }
+        guard new != keyframes else { return }
+        undo.perform("Edit Keyframe") {
+            keyframes = new
+            keysEdited = true
+            saveKeyframes()
+        }
+        if let moved = new.first(where: { $0.id == id }), moved.time != old.time { scrub(to: moved.time); endScrub(at: moved.time) }
+    }
 
     private func registerPlacementUndo(_ old: OverlayPlacement) {
         undoManager.registerUndo(withTarget: self) { m in
@@ -185,6 +251,7 @@ final class PlayerModel: ObservableObject {
                 MainActor.assumeIsolated { self?.autoFollow = false }
             }
             telemetry = Telemetry.load(url: url)
+            loadProject(for: url)
             loadPlace(for: url)
             rebuildStabilizer()
             keyframes = loadKeyframes(for: url)
@@ -234,7 +301,7 @@ final class PlayerModel: ObservableObject {
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.place = info
-            self.setOverlay(LocationOverlay.image(for: info, placement: self.overlayPlacement))
+            self.setOverlay(LocationOverlay.image(for: info, placement: self.overlayPlacement, style: self.cardStyle))
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines.joined(separator: " | "))"); fflush(stdout) }
         }
     }
