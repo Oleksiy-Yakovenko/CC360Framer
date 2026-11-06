@@ -7,14 +7,15 @@ enum Pacing {
     static let seconds = Double(ProcessInfo.processInfo.environment["CC360_PACING"] ?? "")
     static var enabled: Bool { seconds != nil }
     private static let lock = NSLock()
-    private static var draws: [Double] = []
-    private static var shown: [(presented: Double, pts: Double)] = []
-    private static var lastDraw = 0.0
-    private static var newFrameTimes: [Double] = []
-    private static var drawableWaits: [Double] = []
-    private static var drawBodies: [Double] = []
+    // Mutable diagnostics state: every access is guarded by `lock`.
+    nonisolated(unsafe) private static var draws: [Double] = []
+    nonisolated(unsafe) private static var shown: [(presented: Double, pts: Double)] = []
+    nonisolated(unsafe) private static var lastDraw = 0.0
+    nonisolated(unsafe) private static var newFrameTimes: [Double] = []
+    nonisolated(unsafe) private static var drawableWaits: [Double] = []
+    nonisolated(unsafe) private static var drawBodies: [Double] = []
 
-    private static var gpuTimes: [Double] = []
+    nonisolated(unsafe) private static var gpuTimes: [Double] = []
     static func gpu(_ t: Double) { lock.lock(); gpuTimes.append(t); lock.unlock() }
 
     static func timing(drawableWait: Double, body: Double) {

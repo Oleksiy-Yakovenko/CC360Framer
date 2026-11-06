@@ -11,20 +11,20 @@ enum Exporter {
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, global: GlobalFov, fallback: (yaw: Float, pitch: Float, fov: Float),
                     stabilizer: Stabilizer?, settings: ExportSettings, timeMap: TimeMap? = nil, to url: URL,
-                    progress: @escaping (Double) -> Void, cancel: CancelFlag) throws {
+                    progress: @escaping @Sendable (Double) -> Void, cancel: CancelFlag) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure(errorDescription: "No Metal device.") }
         try? FileManager.default.removeItem(at: url)
         // With cuts the video comes from one reader per kept segment (see `CutExport`) and the audio from its own composition.
         let cutMap = timeMap?.hasCuts == true ? timeMap : nil
         if let cutMap, cutMap.segments.isEmpty { throw Failure(errorDescription: "Everything is cut: nothing left to export.") }
         let duration = max(cutMap?.outputDuration ?? composition.duration.seconds, 0.001)
-        let state = ViewState()
+        nonisolated(unsafe) let state = ViewState()
         state.stabilizer = stabilizer
-        let renderer = try Renderer(device: device, state: state, pixelFormat: .bgra8Unorm)
+        nonisolated(unsafe) let renderer = try Renderer(device: device, state: state, pixelFormat: .bgra8Unorm)
         renderer.setOverlays(overlays)
 
-        let reader = try AVAssetReader(asset: composition)
-        let vout = AVAssetReaderVideoCompositionOutput(
+        nonisolated(unsafe) let reader = try AVAssetReader(asset: composition)
+        nonisolated(unsafe) let vout = AVAssetReaderVideoCompositionOutput(
             videoTracks: composition.tracks(withMediaType: .video),
             videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                             kCVPixelBufferMetalCompatibilityKey as String: true])
@@ -41,7 +41,7 @@ enum Exporter {
             cutAudio = comp; mixToUse = mix; audioTracks = tracks
             audioReader = try AVAssetReader(asset: comp)
         }
-        var aout: AVAssetReaderAudioMixOutput?
+        nonisolated(unsafe) var aout: AVAssetReaderAudioMixOutput?
         if !audioTracks.isEmpty {
             let o = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
                 AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
@@ -53,18 +53,18 @@ enum Exporter {
         }
         _ = cutAudio   // keep the audio composition alive while reading
 
-        let writer = try AVAssetWriter(outputURL: url, fileType: settings.container.fileType)
+        nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: settings.container.fileType)
         let size = settings.outputSize
-        let vin = AVAssetWriterInput(mediaType: .video, outputSettings: settings.videoOutputSettings)
+        nonisolated(unsafe) let vin = AVAssetWriterInput(mediaType: .video, outputSettings: settings.videoOutputSettings)
         vin.expectsMediaDataInRealTime = false
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vin, sourcePixelBufferAttributes: [
+        nonisolated(unsafe) let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vin, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: size.width, kCVPixelBufferHeightKey as String: size.height,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
         ])
         writer.add(vin)
-        var ain: AVAssetWriterInput?
+        nonisolated(unsafe) var ain: AVAssetWriterInput?
         if aout != nil {
             let i = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: ExportSettings.audioBitRate])
@@ -81,13 +81,16 @@ enum Exporter {
         }
         writer.startSession(atSourceTime: .zero)
 
+        // The AVFoundation/Metal objects below are not Sendable. Each is used only by the one dispatch queue that drains its
+        // writer input (video, audio) once setup is done, and `group.wait()` below joins those queues before anything else touches them.
+        nonisolated(unsafe) let sharedComposition = composition
         let group = DispatchGroup()
-        var failure: Error?
+        nonisolated(unsafe) var failure: Error?
         let failLock = NSLock()
-        func fail(_ e: Error) { failLock.lock(); if failure == nil { failure = e }; failLock.unlock() }
+        @Sendable func fail(_ e: Error) { failLock.lock(); if failure == nil { failure = e }; failLock.unlock() }
 
         // Renders one source frame through the camera at `time` (source seconds) into `out`.
-        func render(_ src: CVPixelBuffer, at time: Double, into out: CVPixelBuffer) -> Bool {
+        @Sendable func render(_ src: CVPixelBuffer, at time: Double, into out: CVPixelBuffer) -> Bool {
             guard let (cv, target) = renderer.makeTexture(from: out) else { return false }
             renderer.setFrame(src)
             state.frameTime = time   // stabiliser and location card follow the SOURCE time
@@ -103,8 +106,8 @@ enum Exporter {
             let frameSeconds = max(fd.seconds, 1.0 / 240)
             let total = max(1, Int((cutMap.outputDuration / frameSeconds).rounded()))
             let sourceDuration = composition.duration.seconds
-            var feeds: [Int: CutExport.FrameFeed] = [:]
-            var index = 0
+            nonisolated(unsafe) var feeds: [Int: CutExport.FrameFeed] = [:]
+            nonisolated(unsafe) var index = 0
             vin.requestMediaDataWhenReady(on: DispatchQueue(label: "export.video")) {
                 func finish() { feeds.values.forEach { $0.cancel() }; vin.markAsFinished(); group.leave() }
                 while vin.isReadyForMoreMediaData {
@@ -116,7 +119,7 @@ enum Exporter {
                         for k in feeds.keys where k < sample.segment { feeds[k]?.cancel(); feeds[k] = nil }
                         func feed(_ i: Int) throws -> CutExport.FrameFeed {
                             if let f = feeds[i] { return f }
-                            let f = try CutExport.FrameFeed(composition: composition, videoComposition: videoComposition, segment: cutMap.segments[i], duration: sourceDuration)
+                            let f = try CutExport.FrameFeed(composition: sharedComposition, videoComposition: videoComposition, segment: cutMap.segments[i], duration: sourceDuration)
                             feeds[i] = f
                             return f
                         }
@@ -156,7 +159,9 @@ enum Exporter {
             }
         }
         }
-        if let aout, let ain {
+        if let aoutSafe = aout, let ainSafe = ain {
+            nonisolated(unsafe) let aout = aoutSafe
+            nonisolated(unsafe) let ain = ainSafe
             group.enter()
             ain.requestMediaDataWhenReady(on: DispatchQueue(label: "export.audio")) {
                 while ain.isReadyForMoreMediaData {

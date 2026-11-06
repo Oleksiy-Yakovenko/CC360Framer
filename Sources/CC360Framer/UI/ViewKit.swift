@@ -28,6 +28,7 @@ class ModelViewController: NSViewController {
 }
 
 /// Small helpers for building controls in code.
+@MainActor
 enum Kit {
     /// Mark a view with this identifier to make `sidebarStack` stretch it to the full width.
     static let fullWidthID = NSUserInterfaceItemIdentifier("fullWidth")
@@ -184,7 +185,7 @@ enum Kit {
         ])
     }
 
-    static func time(_ s: Double) -> String {
+    nonisolated static func time(_ s: Double) -> String {
         let t = Int(max(s, 0))
         return String(format: "%d:%02d", t / 60, t % 60)
     }

@@ -3,7 +3,7 @@ import Metal
 import CoreVideo
 
 /// Instruction asking the compositor to stack the given source tracks vertically.
-final class StackInstruction: NSObject, AVVideoCompositionInstructionProtocol {
+final class StackInstruction: NSObject, @unchecked Sendable, AVVideoCompositionInstructionProtocol {
     let timeRange: CMTimeRange
     let enablePostProcessing = false
     let containsTweening = false
@@ -21,23 +21,27 @@ final class StackInstruction: NSObject, AVVideoCompositionInstructionProtocol {
 
 /// Custom compositor that copies both lens tracks into one tall frame (track 0 on top)
 /// so a single AVPlayerItemVideoOutput can deliver both to the Metal view.
-final class StackCompositor: NSObject, AVVideoCompositing {
-    private static let attrs: [String: Any] = [
+// @unchecked: Metal queue/texture cache are thread-safe; AVFoundation calls us from its own queues.
+final class StackCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
+    private static let attrs: [String: any Sendable] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelBufferMetalCompatibilityKey as String: true,
-        kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+        kCVPixelBufferIOSurfacePropertiesKey as String: [String: any Sendable](),
     ]
-    var sourcePixelBufferAttributes: [String: Any]? { Self.attrs }
-    var requiredPixelBufferAttributesForRenderContext: [String: Any] { Self.attrs }
+    var sourcePixelBufferAttributes: [String: any Sendable]? { Self.attrs }
+    var requiredPixelBufferAttributesForRenderContext: [String: any Sendable] { Self.attrs }
 
     private static let skipBlit = ProcessInfo.processInfo.environment["CC360_NOBLIT"] != nil
     private let device = MTLCreateSystemDefaultDevice()!
-    private lazy var queue = device.makeCommandQueue()!
-    private var cache: CVMetalTextureCache!
+    private let queue: MTLCommandQueue
+    private let cache: CVMetalTextureCache
 
     override init() {
+        queue = device.makeCommandQueue()!
+        var c: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(nil, nil, device, nil, &c)
+        cache = c!
         super.init()
-        CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)
     }
 
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
@@ -80,10 +84,13 @@ final class StackCompositor: NSObject, AVVideoCompositing {
             y += h
         }
         blit.endEncoding()
+        // CoreVideo buffers are not Sendable; they are only retained/handed back here, never touched concurrently.
+        nonisolated(unsafe) let keepAlive = keep
+        nonisolated(unsafe) let composed = out
         cb.addCompletedHandler { cb in
-            _ = keep
+            _ = keepAlive
             if Pacing.enabled { Pacing.gpu(cb.gpuEndTime - cb.gpuStartTime) }
-            request.finish(withComposedVideoFrame: out)
+            request.finish(withComposedVideoFrame: composed)
         }
         cb.commit()
     }
