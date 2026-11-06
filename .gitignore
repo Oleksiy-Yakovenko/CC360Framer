@@ -3,3 +3,4 @@
 *.360
 *.reframe.json
 *.analysis.json
+*.location.json

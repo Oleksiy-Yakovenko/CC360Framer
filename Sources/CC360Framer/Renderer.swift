@@ -94,6 +94,23 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
 }
 """
 
+private let overlayShaderSource = """
+#include <metal_stdlib>
+using namespace metal;
+struct OU { float4 rect; float alpha; };
+struct OOut { float4 pos [[position]]; float2 uv; };
+vertex OOut ovs(uint vid [[vertex_id]], constant OU& u [[buffer(0)]]) {
+    float2 p = float2(vid & 1, vid >> 1);
+    OOut o;
+    o.pos = float4(mix(u.rect.xy, u.rect.zw, p), 0, 1);
+    o.uv = float2(p.x, 1.0 - p.y);
+    return o;
+}
+fragment float4 ofs(OOut in [[stage_in]], constant OU& u [[buffer(0)]], texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    return tex.sample(smp, in.uv) * u.alpha;   // premultiplied
+}
+"""
+
 /// Draws the projected view of a stacked 5888x3840 BGRA frame.
 final class Renderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
@@ -112,6 +129,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Called at the start of every draw, e.g. to apply the camera path to the view state.
     var preDraw: (() -> Void)?
     private var stackTexture: MTLTexture?
+    private let overlayPipeline: MTLRenderPipelineState
+    private var overlayTexture: MTLTexture?
 
     init(device: MTLDevice, state: ViewState, pixelFormat: MTLPixelFormat) throws {
         self.device = device
@@ -123,6 +142,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         d.fragmentFunction = lib.makeFunction(name: "fs")
         d.colorAttachments[0].pixelFormat = pixelFormat
         pipeline = try device.makeRenderPipelineState(descriptor: d)
+        let ol = try device.makeLibrary(source: overlayShaderSource, options: nil)
+        let od = MTLRenderPipelineDescriptor()
+        od.vertexFunction = ol.makeFunction(name: "ovs")
+        od.fragmentFunction = ol.makeFunction(name: "ofs")
+        let ca = od.colorAttachments[0]!
+        ca.pixelFormat = pixelFormat
+        ca.isBlendingEnabled = true
+        ca.sourceRGBBlendFactor = .one; ca.sourceAlphaBlendFactor = .one
+        ca.destinationRGBBlendFactor = .oneMinusSourceAlpha; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        overlayPipeline = try device.makeRenderPipelineState(descriptor: od)
         let s = MTLSamplerDescriptor()
         s.minFilter = .linear; s.magFilter = .linear
         s.sAddressMode = .clampToEdge; s.tAddressMode = .clampToEdge
@@ -161,6 +190,44 @@ final class Renderer: NSObject, MTKViewDelegate {
         texture = t; chroma = nil
     }
 
+    /// Title card (premultiplied BGRA, e.g. from `LocationOverlay.image`) shown over the first seconds of the video; nil removes it.
+    func setOverlay(_ image: CGImage?) {
+        guard let image else { overlayTexture = nil; return }
+        let w = image.width, h = image.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
+        guard let t = device.makeTexture(descriptor: d) else { return }
+        t.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: bytes, bytesPerRow: w * 4)
+        overlayTexture = t
+    }
+
+    private func drawOverlay(_ enc: MTLRenderCommandEncoder, targetWidth: Float, targetHeight: Float) {
+        guard let tex = overlayTexture else { return }
+        let alpha = LocationOverlay.alpha(at: state.frameTime)
+        guard alpha > 0 else { return }
+        // Card height is a fixed share of the short side; shrink if it would not fit the width.
+        let short = min(targetWidth, targetHeight)
+        var h = short * 0.4
+        var w = h * Float(tex.width) / Float(tex.height)
+        if w > targetWidth * 0.9 { w = targetWidth * 0.9; h = w * Float(tex.height) / Float(tex.width) }
+        let margin = short * 0.04
+        let ndcW = 2 * w / targetWidth, ndcH = 2 * h / targetHeight
+        let mx = 2 * margin / targetWidth, my = 2 * margin / targetHeight
+        let a = state.overlayPlacement.anchor
+        let x0 = a.x < 0 ? -1 + mx : a.x > 0 ? 1 - mx - ndcW : -ndcW / 2
+        let y0 = a.y < 0 ? -1 + my : a.y > 0 ? 1 - my - ndcH : -ndcH / 2
+        var u: [Float] = [x0, y0, x0 + ndcW, y0 + ndcH, alpha, 0, 0, 0]
+        enc.setRenderPipelineState(overlayPipeline)
+        enc.setVertexBytes(&u, length: u.count * 4, index: 0)
+        enc.setFragmentBytes(&u, length: u.count * 4, index: 0)
+        enc.setFragmentTexture(tex, index: 0)
+        enc.setFragmentSamplerState(sampler, index: 0)
+        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    }
+
     func setTexture(_ t: MTLTexture) { texture = t; chroma = nil }
 
     /// Stacks the two lens frames (any matching size) into one texture and makes it current.
@@ -194,12 +261,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         guard let cb = queue.makeCommandBuffer() else { return }
-        encode(into: pass, commandBuffer: cb, aspect: Float(target.width) / Float(target.height))
+        encode(into: pass, commandBuffer: cb, aspect: Float(target.width) / Float(target.height), size: CGSize(width: target.width, height: target.height))
         cb.commit()
         cb.waitUntilCompleted()
     }
 
-    func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float) {
+    func encode(into pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, aspect: Float, size: CGSize) {
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         if let texture {
             let b = state.stabilizer?.basis(at: state.frameTime) ?? .identity
@@ -214,6 +281,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
+        drawOverlay(enc, targetWidth: Float(size.width), targetHeight: Float(size.height))
         enc.endEncoding()
     }
 
@@ -232,7 +300,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
         let size = view.drawableSize
-        encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)))
+        encode(into: pass, commandBuffer: cb, aspect: Float(size.width / max(size.height, 1)), size: size)
         cb.present(drawable)
         if Pacing.enabled {
             Pacing.drew()

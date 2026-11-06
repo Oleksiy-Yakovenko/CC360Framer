@@ -10,6 +10,11 @@ struct Telemetry {
     /// Image orientation relative to the camera body, quaternion (w, x, y, z); a roll-only correction in these files.
     var imageOrientation: [SIMD4<Float>] = []
 
+    /// First GPS position with a lock, if the file has one.
+    var gps: GPSFix?
+
+    struct GPSFix: Codable, Equatable { var latitude: Double; var longitude: Double }
+
     var count: Int { min(orientation.count, gravity.count) }
 
     /// nil when the file has no usable telemetry.
@@ -141,10 +146,38 @@ struct Telemetry {
         }
     }
 
+    /// Big-endian signed 32-bit values at `offset` (bytes from `base`).
+    private static func int32(_ b: [UInt8], _ o: Int) -> Int32 {
+        Int32(bitPattern: UInt32(b[o]) << 24 | UInt32(b[o + 1]) << 16 | UInt32(b[o + 2]) << 8 | UInt32(b[o + 3]))
+    }
+
+    /// First position with a 2D/3D lock from a `GPS5` (older cameras, lock in `GPSF`) or `GPS9` (lock in the sample) stream.
+    private static func parseGPS(_ b: [UInt8], _ items: [KLV], into t: inout Telemetry) {
+        guard t.gps == nil, let scal = items.first(where: { $0.key == "SCAL" }), scal.type == UInt8(ascii: "l") else { return }
+        let scales = (0..<scal.repeats).map { Double(int32(b, scal.data.lowerBound + $0 * 4)) }
+        guard let lat = scales.first, scales.count >= 2 else { return }
+        func scale(_ i: Int) -> Double { max(scales.count > i ? scales[i] : lat, 1) }
+        let fix = items.first { $0.key == "GPSF" }.map { Int(int32(b, $0.data.lowerBound)) } ?? 3
+        for k in items where k.key == "GPS5" || k.key == "GPS9" {
+            for i in 0..<k.repeats {
+                let o = k.data.lowerBound + i * k.size
+                guard k.size >= 8 else { continue }
+                var locked = fix >= 2
+                if k.key == "GPS9", k.size >= 32 { locked = (Int(b[o + 30]) << 8 | Int(b[o + 31])) >= 2 }
+                let la = Double(int32(b, o)) / scale(0), lo = Double(int32(b, o + 4)) / scale(1)
+                if locked, la != 0 || lo != 0, abs(la) <= 90, abs(lo) <= 180 {
+                    t.gps = GPSFix(latitude: la, longitude: lo)
+                    return
+                }
+            }
+        }
+    }
+
     private static func parseGPMF(_ b: [UInt8], into t: inout Telemetry) {
         for devc in klvs(b, 0..<b.count) where devc.key == "DEVC" {
             for strm in klvs(b, devc.data) where strm.key == "STRM" {
                 let items = klvs(b, strm.data)
+                parseGPS(b, items, into: &t)
                 guard let scal = items.first(where: { $0.key == "SCAL" }) else { continue }
                 let scale = max(int16s(b, scal, 0, 1)[0], 1)
                 for k in items where (k.key == "CORI" || k.key == "GRAV" || k.key == "IORI") && k.type == UInt8(ascii: "s") {

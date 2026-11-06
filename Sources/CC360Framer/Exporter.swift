@@ -19,7 +19,7 @@ enum Exporter {
     }
 
     /// Blocking; call from a background thread.
-    static func run(composition: AVMutableComposition, videoComposition: AVVideoComposition,
+    static func run(overlay: CGImage?, placement: OverlayPlacement, composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, fallback: (yaw: Float, pitch: Float, fov: Float),
                     stabilizer: Stabilizer?, preset: Preset, to url: URL,
@@ -29,7 +29,9 @@ enum Exporter {
         let duration = max(composition.duration.seconds, 0.001)
         let state = ViewState()
         state.stabilizer = stabilizer
+        state.overlayPlacement = placement
         let renderer = try Renderer(device: device, state: state, pixelFormat: .bgra8Unorm)
+        renderer.setOverlay(overlay)
 
         let reader = try AVAssetReader(asset: composition)
         let vout = AVAssetReaderVideoCompositionOutput(

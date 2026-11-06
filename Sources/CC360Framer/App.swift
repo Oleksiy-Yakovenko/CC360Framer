@@ -15,6 +15,8 @@ struct MetalView: NSViewRepresentable {
         let renderer = try! Renderer(device: device, state: model.viewState, pixelFormat: view.colorPixelFormat)
         renderer.frameProvider = { [frames = model.frames] host in frames.next(at: host) }
         renderer.preDraw = { [weak model] in MainActor.assumeIsolated { model?.applyPath() } }
+        model.onOverlay = { [weak renderer] in renderer?.setOverlay($0) }
+        model.onOverlay?(model.overlayImage)
         view.delegate = renderer
         context.coordinator.renderer = renderer
         return view
@@ -81,6 +83,9 @@ struct ContentView: View {
                 Picker("", selection: Binding(get: { model.stabilization }, set: { model.stabilization = $0; model.stabilizationChanged() })) {
                     ForEach(StabilizeMode.allCases) { Text("Stabilise: \($0.rawValue)").tag($0) }
                 }.labelsHidden().frame(width: 190).help("Horizon lock and shake removal from the camera's motion data")
+                Picker("", selection: $model.overlayPlacement) {
+                    ForEach(OverlayPlacement.allCases) { Text("Location: \($0.rawValue)").tag($0) }
+                }.labelsHidden().frame(width: 190).help("Where the location card (first 10 s) is placed, in preview and export")
                 if let p = model.analysisProgress {
                     ProgressView(value: p).frame(width: 90)
                     Button("Cancel") { model.cancelJob() }

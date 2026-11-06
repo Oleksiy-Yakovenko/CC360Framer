@@ -24,14 +24,16 @@ Xcode:
 - **Analyse:** projects 8 views around the horizon, detects people and (on the side views) salient objects, and stores the raw detections next to the video (`<file>.analysis.json`). A path style turns them into a smoothed camera path of editable keyframes (diamonds under the seekbar), saved as `<file>.reframe.json`. Re-analyse asks for confirmation because it takes minutes.
 - **Style** (drop-down, remembered between launches): *Follow subject* keeps the main subject (the rider) in view. *Scenery + rider* looks forward along the direction of travel and glances at objects on the sides. The rider is shown rarely: at most twice per clip, at least a minute apart, and only when nothing else is interesting. Switching style regenerates the path from the stored detections without re-analysing (it asks first if you have hand-edited keyframes: use **Build path**).
 - **Stabilise** (drop-down, default *Level + smooth*): uses the camera's own motion data (`GRAV` gravity and `CORI` orientation from the file's `gpmd` track) to keep the horizon level and remove shake. *Level* locks the horizon only; *Level + smooth* also smooths the heading. Look directions and keyframes are relative to this stabilised camera, so pitch 0 is the horizon. Field of view defaults to 70° vertical (wider looks stretched at the edges). Works without analysing.
+- **Location card:** the first GPS fix in the file is reverse-geocoded (needs network once; cached as `<file>.location.json`) and shown for the first 10 seconds (placement: any corner, top/bottom middle or centre, from the "Location" drop-down, remembered between launches) as country, place name and coordinates, in both the preview and the export. Files without a GPS lock show nothing.
 - **Edit:** `K` sets a keyframe from the current view, click a diamond to select it, `Delete` removes it. Dragging the view switches off Auto; press Auto to follow the path again.
 - **Export:** HEVC + AAC, 1080p / 4K 16:9 or 1080×1920 9:16, using the audio tracks currently toggled on.
 
-Limits: rotation compensation cannot remove shake caused by camera translation (small residual wobble at 0.5–2 Hz). HiLight tags, GPS and gyro/accelerometer data are not used yet (only orientation and gravity).
+Limits: rotation compensation cannot remove shake caused by camera translation (small residual wobble at 0.5–2 Hz). HiLight tags and gyro/accelerometer data are not used yet (only orientation, gravity and the first GPS fix).
 
 ## Command line tools and debugging
 
 - `--telemetry file.360`: print parsed telemetry counts and first/last samples.
+- `--telemetry` also prints the first GPS fix.
 - `--snapshot stacked.png prefix`: render projection test images. Env: `CC360_TELEMETRY=file.360 CC360_TIME=sec CC360_MODE=level|smooth CC360_AXES=1,-1,1` to apply stabilisation.
 - `--stab-test file.360 [start] [length]`: measure residual shake per stabilisation mode and the telemetry/video time offset (env `CC360_SIGMAS`, `CC360_SCAN`, `CC360_W`).
 - `--analysis-compare file.360 [start] [length]`: compare analysis on the raw versus level frame.

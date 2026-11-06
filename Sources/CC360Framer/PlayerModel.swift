@@ -56,6 +56,18 @@ final class PlayerModel: ObservableObject {
     }
     @Published var stabilization: StabilizeMode = .smooth
     private var telemetry: Telemetry?
+    /// Location title card for the first seconds of the clip; nil when the file has no GPS lock.
+    private(set) var overlayImage: CGImage?
+    var onOverlay: ((CGImage?) -> Void)?
+    @Published var overlayPlacement: OverlayPlacement = OverlayPlacement(rawValue: UserDefaults.standard.string(forKey: "overlayPlacement") ?? "") ?? .bottomLeft {
+        didSet {
+            UserDefaults.standard.set(overlayPlacement.rawValue, forKey: "overlayPlacement")
+            viewState.overlayPlacement = overlayPlacement
+            if let place { setOverlay(LocationOverlay.image(for: place, placement: overlayPlacement)) }
+        }
+    }
+    private var place: PlaceInfo?
+    private var placeTask: Task<Void, Never>?
     private(set) var stabilizer: Stabilizer?
     /// Raw detections from the last analysis; lets the style change without re-analysing.
     @Published private(set) var observations: [Observation] = []
@@ -144,6 +156,7 @@ final class PlayerModel: ObservableObject {
                 MainActor.assumeIsolated { self?.autoFollow = false }
             }
             telemetry = Telemetry.load(url: url)
+            loadPlace(for: url)
             rebuildStabilizer()
             keyframes = loadKeyframes(for: url)
             observations = loadObservations(for: url)
@@ -167,6 +180,29 @@ final class PlayerModel: ObservableObject {
             }
         } catch {
             errorText = error.localizedDescription
+        }
+    }
+
+    private func setOverlay(_ image: CGImage?) {
+        overlayImage = image
+        onOverlay?(image)
+    }
+
+    /// Looks up the place name for the first GPS fix (cached next to the video) and builds the title card.
+    private func loadPlace(for url: URL) {
+        placeTask?.cancel()
+        setOverlay(nil)
+        place = nil
+        viewState.overlayPlacement = overlayPlacement
+        guard let fix = telemetry?.gps else { placeTask = nil; return }
+        placeTask = Task { [weak self] in
+            let info: PlaceInfo
+            if let cached = PlaceInfo.cached(for: url, matching: fix) { info = cached } else { info = await PlaceInfo.lookup(fix: fix, cacheFor: url) }
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            self.place = info
+            self.setOverlay(LocationOverlay.image(for: info, placement: self.overlayPlacement))
+            if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil { print("location: \(info.lines.joined(separator: " | "))"); fflush(stdout) }
         }
     }
 
@@ -423,6 +459,7 @@ extension PlayerModel {
     /// Headless end-to-end run for testing: analyse, then export (CC360_BATCH=out.mp4).
     func runBatch(_ out: URL) async {
         let started = Date()
+        await placeTask?.value
         if ProcessInfo.processInfo.environment["CC360_STYLE"] == "scenery" { style = .scenery }
         if ProcessInfo.processInfo.environment["CC360_NO_ANALYSIS"] != nil {
             keyframes = []; autoFollow = false   // plain stabilised export of the default view
@@ -460,9 +497,13 @@ extension PlayerModel {
         let path = self.path
         let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
         let box = UncheckedBox((comp, vc, mix, stabilizer))
+        let pending = placeTask
+        let placement = overlayPlacement
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try Exporter.run(composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
+                await pending?.value   // make sure the location lookup has finished
+                let overlay = await MainActor.run { self?.overlayImage }
+                try Exporter.run(overlay: overlay, placement: placement, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
                                  audioTrackIDs: audioIDs, path: path, fallback: fallback, stabilizer: box.value.3, preset: preset, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
                 await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }

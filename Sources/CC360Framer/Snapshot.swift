@@ -55,7 +55,7 @@ enum Snapshot {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         let cb = r.queue.makeCommandBuffer()!
-        r.encode(into: pass, commandBuffer: cb, aspect: Float(size.0) / Float(size.1))
+        r.encode(into: pass, commandBuffer: cb, aspect: Float(size.0) / Float(size.1), size: CGSize(width: size.0, height: size.1))
         cb.commit()
         cb.waitUntilCompleted()
         var bytes = [UInt8](repeating: 0, count: size.0 * size.1 * 4)

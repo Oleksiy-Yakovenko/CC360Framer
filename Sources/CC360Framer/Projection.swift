@@ -27,6 +27,8 @@ final class ViewState {
     var stabilizer: Stabilizer?
     /// Time of the frame being drawn, used to look up the stabilised camera.
     var frameTime: Double = 0
+    /// Corner / edge / centre the location card is drawn at.
+    var overlayPlacement: OverlayPlacement = .bottomLeft
     /// Called when the user takes manual control of the view (drag/zoom).
     var onUserLook: (() -> Void)?
 

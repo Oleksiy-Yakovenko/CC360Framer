@@ -7,7 +7,7 @@ Build instructions (command line and Xcode), usage and all command-line tools / 
 
 Notes for working here:
 - Headless/CLI modes only worked reliably through the built `.app` binary (`CC360Framer.app/Contents/MacOS/CC360Framer`). A `.build/debug` run from a sandboxed shell printed nothing; if a batch run is silent, retry with the sandbox disabled.
-- Commits end with the `Co-Authored-By` line given by the session. `.gitignore` excludes `.build/`, `*.app`, `*.360`, `*.reframe.json`, `*.analysis.json`.
+- Commits end with the `Co-Authored-By` line given by the session. `.gitignore` excludes `.build/`, `*.app`, `*.360`, `*.reframe.json`, `*.analysis.json`, `*.location.json`.
 - Never write into the user's footage folder (`~/Movies/GoPro/...`); symlink the video and copy sidecars into the scratchpad.
 
 ## Architecture (`Sources/CC360Framer/`)
@@ -22,9 +22,10 @@ Notes for working here:
 - `Styles.swift`: `PathStyle` (`.follow`, `.scenery`) and `SceneryPlanner` (forward, side glances, rare rider shots: at most 2, at least 60 s apart, only when no side slot is interesting; candidates near the rider are ignored).
 - `CameraPath.swift`: `PathBuilder` (grid, median, Gaussian smoothing, speed limit, keyframe decimation) and Hermite `CameraPath`.
 - `Exporter.swift`: reads the composition, reprojects with Metal per frame, writes HEVC + AAC (presets 1080p, 4K, 1080x1920).
+- `LocationOverlay.swift`: `PlaceInfo` (first GPS fix, `CLGeocoder` reverse geocode, cached as `<file>.location.json`) and the title card bitmap (`LocationOverlay.alpha(at:)`: 10 s with fades). `Renderer.setOverlay` composites it in a second Metal pass, so preview and export share the code. GPS comes from `Telemetry.gps` (`GPS5`/`GPS9`).
 - `Snapshot.swift`, `StabTest.swift` (also `AnalysisCompare`), `Pacing.swift`: test and diagnostic tooling.
 
-Sidecars next to the video: `<file>.analysis.json` (raw detections) and `<file>.reframe.json` (keyframes).
+Sidecars next to the video: `<file>.analysis.json` (raw detections), `<file>.reframe.json` (keyframes) and `<file>.location.json` (place names).
 
 ## File format facts
 - Each track is 5888x1920, a ring of three 90° EAC faces (tiles 992/3904/992, 64 px overlap). Track 0 ring about the vertical axis (front = yaw 0); track 1 ring about the horizontal axis (rider in its "back" face, stored rotated 90°).
