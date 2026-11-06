@@ -5,7 +5,7 @@ if args.first == "--telemetry", args.count > 1 {
     guard let t = Telemetry.load(url: URL(fileURLWithPath: args[1])) else { print("no telemetry"); exit(1) }
     print("frames: \(t.count)  orientation \(t.orientation.count)  gravity \(t.gravity.count)")
     print("first q: \(t.orientation[0])  g: \(t.gravity[0])")
-    print("gps: \(t.gps.map { "\($0.latitude), \($0.longitude)" } ?? "none")")
+    print("gps: \(t.gps.map { "\($0.latitude), \($0.longitude)  alt \($0.altitude.map { String(format: "%.1f m", $0) } ?? "none")" } ?? "none")")
     print("last  q: \(t.orientation[t.count - 1])  g: \(t.gravity[t.count - 1])")
     exit(0)
 }

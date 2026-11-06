@@ -12,8 +12,23 @@ struct Telemetry {
 
     /// First GPS position with a lock, if the file has one.
     var gps: GPSFix?
+    /// Altitudes of the first locked fixes; the very first fix is often off by tens of metres while the receiver settles.
+    var altitudes: [Double] = []
+    static let altitudeWindow = 20
 
-    struct GPSFix: Codable, Equatable { var latitude: Double; var longitude: Double }
+    /// Replaces the first fix's altitude with the median of the first locked fixes.
+    mutating func settleAltitude() {
+        guard gps != nil, !altitudes.isEmpty else { return }
+        let sorted = altitudes.sorted()
+        gps?.altitude = sorted.count % 2 == 1 ? sorted[sorted.count / 2] : (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2
+    }
+
+    struct GPSFix: Codable, Equatable {
+        var latitude: Double
+        var longitude: Double
+        /// Metres (GPS height, field 2 of GPS5/GPS9); nil when the stream has none.
+        var altitude: Double?
+    }
 
     var count: Int { min(orientation.count, gravity.count) }
 
@@ -27,6 +42,7 @@ struct Telemetry {
             guard (try? fh.seek(toOffset: offset)) != nil, let data = try? fh.read(upToCount: size), data.count == size else { continue }
             parseGPMF([UInt8](data), into: &t)
         }
+        t.settleAltitude()
         return t.count > 0 ? t : nil
     }
 
@@ -124,9 +140,9 @@ struct Telemetry {
 
     // MARK: GPMF
 
-    private struct KLV { let key: String; let type: UInt8; let size: Int; let repeats: Int; let data: Range<Int> }
+    struct KLV { let key: String; let type: UInt8; let size: Int; let repeats: Int; let data: Range<Int> }
 
-    private static func klvs(_ b: [UInt8], _ r: Range<Int>) -> [KLV] {
+    static func klvs(_ b: [UInt8], _ r: Range<Int>) -> [KLV] {
         var out: [KLV] = []
         var p = r.lowerBound
         while p + 8 <= r.upperBound {
@@ -152,8 +168,8 @@ struct Telemetry {
     }
 
     /// First position with a 2D/3D lock from a `GPS5` (older cameras, lock in `GPSF`) or `GPS9` (lock in the sample) stream.
-    private static func parseGPS(_ b: [UInt8], _ items: [KLV], into t: inout Telemetry) {
-        guard t.gps == nil, let scal = items.first(where: { $0.key == "SCAL" }), scal.type == UInt8(ascii: "l") else { return }
+    static func parseGPS(_ b: [UInt8], _ items: [KLV], into t: inout Telemetry) {
+        guard t.gps == nil || t.altitudes.count < Telemetry.altitudeWindow, let scal = items.first(where: { $0.key == "SCAL" }), scal.type == UInt8(ascii: "l") else { return }
         let scales = (0..<scal.repeats).map { Double(int32(b, scal.data.lowerBound + $0 * 4)) }
         guard let lat = scales.first, scales.count >= 2 else { return }
         func scale(_ i: Int) -> Double { max(scales.count > i ? scales[i] : lat, 1) }
@@ -166,14 +182,16 @@ struct Telemetry {
                 if k.key == "GPS9", k.size >= 32 { locked = (Int(b[o + 30]) << 8 | Int(b[o + 31])) >= 2 }
                 let la = Double(int32(b, o)) / scale(0), lo = Double(int32(b, o + 4)) / scale(1)
                 if locked, la != 0 || lo != 0, abs(la) <= 90, abs(lo) <= 180 {
-                    t.gps = GPSFix(latitude: la, longitude: lo)
-                    return
+                    let alt: Double? = k.size >= 12 && scales.count > 2 ? Double(int32(b, o + 8)) / scale(2) : nil
+                    if t.gps == nil { t.gps = GPSFix(latitude: la, longitude: lo, altitude: alt) }
+                    if let alt { t.altitudes.append(alt) }
+                    if t.altitudes.count >= Telemetry.altitudeWindow { return }
                 }
             }
         }
     }
 
-    private static func parseGPMF(_ b: [UInt8], into t: inout Telemetry) {
+    static func parseGPMF(_ b: [UInt8], into t: inout Telemetry) {
         for devc in klvs(b, 0..<b.count) where devc.key == "DEVC" {
             for strm in klvs(b, devc.data) where strm.key == "STRM" {
                 let items = klvs(b, strm.data)

@@ -8,6 +8,8 @@ struct PlaceInfo: Codable, Equatable {
     var longitude: Double
     var country: String?
     var place: String?
+    /// Metres; optional so caches written before altitude existed still decode (refreshed from the telemetry on open).
+    var altitude: Double?
 
     static func cached(for url: URL, matching fix: Telemetry.GPSFix) -> PlaceInfo? {
         guard let data = Sidecar.read(for: url, kind: "location"), let p = try? JSONDecoder().decode(PlaceInfo.self, from: data),
@@ -17,7 +19,7 @@ struct PlaceInfo: Codable, Equatable {
 
     /// Reverse geocodes (needs network). Falls back to coordinates only when the lookup fails; failures are not cached.
     static func lookup(fix: Telemetry.GPSFix, cacheFor url: URL) async -> PlaceInfo {
-        var info = PlaceInfo(latitude: fix.latitude, longitude: fix.longitude)
+        var info = PlaceInfo(latitude: fix.latitude, longitude: fix.longitude, altitude: fix.altitude)
         let loc = CLLocation(latitude: fix.latitude, longitude: fix.longitude)
         guard let mark = try? await CLGeocoder().reverseGeocodeLocation(loc, preferredLocale: Locale(identifier: "en_US")).first else { return info }
         info.country = mark.country
@@ -26,16 +28,29 @@ struct PlaceInfo: Codable, Equatable {
             // "Street, City" reads better than a lone venue or neighbourhood name.
             [first, mark.locality].compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: ", ")
         } ?? mark.administrativeArea
-        if let data = try? JSONEncoder().encode(info) { Sidecar.write(data, for: url, kind: "location") }
+        info.save(for: url)
         return info
     }
+
+    func save(for url: URL) {
+        if let data = try? JSONEncoder().encode(self) { Sidecar.write(data, for: url, kind: "location") }
+    }
+
+    /// A cached entry with the altitude of this fix (older caches have none).
+    func withAltitude(of fix: Telemetry.GPSFix) -> PlaceInfo {
+        var p = self
+        p.altitude = fix.altitude
+        return p
+    }
+
+    var altitudeText: String? { altitude.map { String(format: "%.0f m", $0) } }
 
     var coordinateText: String {
         String(format: "%.5f° %@, %.5f° %@", abs(latitude), latitude >= 0 ? "N" : "S", abs(longitude), longitude >= 0 ? "E" : "W")
     }
 
-    /// Country, place, coordinates (missing names are left out).
-    var lines: [String] { [country, place, coordinateText].compactMap { $0 } }
+    /// Country, place, coordinates, altitude (missing parts are left out).
+    var lines: [String] { [country, place, coordinateText, altitudeText].compactMap { $0 } }
 }
 
 /// Where the card sits in the frame; also sets the text alignment inside the card.
@@ -71,7 +86,8 @@ enum LocationOverlay {
 
     static func image(for info: PlaceInfo, placement: OverlayPlacement) -> CGImage? {
         let lines = info.lines
-        let sizes: [CGFloat] = lines.count == 3 ? [64, 44, 34] : Array(repeating: 44, count: lines.count)
+        let sizes: [CGFloat] = lines.count >= 3 ? [64, 44] + Array(repeating: 34, count: lines.count - 2) : Array(repeating: 44, count: lines.count)
+        let detailStart = lines.count - (info.altitude != nil ? 2 : 1)
         let attributed = zip(lines, sizes).enumerated().map { i, pair -> NSAttributedString in
             let (text, size) = pair
             let font = NSFont.systemFont(ofSize: size, weight: i == 0 ? .bold : .regular)
@@ -79,7 +95,7 @@ enum LocationOverlay {
             shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
             shadow.shadowBlurRadius = 8
             shadow.shadowOffset = .zero
-            return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(i == lines.count - 1 ? 0.85 : 1), .shadow: shadow])
+            return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(i >= detailStart ? 0.85 : 1), .shadow: shadow])
         }
         let pad: CGFloat = 24, gap: CGFloat = 8
         let widths = attributed.map { ceil($0.size().width) }

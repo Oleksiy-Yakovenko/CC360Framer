@@ -227,7 +227,10 @@ final class PlayerModel: ObservableObject {
         guard let fix = telemetry?.gps else { placeTask = nil; return }
         placeTask = Task { [weak self] in
             let info: PlaceInfo
-            if let cached = PlaceInfo.cached(for: url, matching: fix) { info = cached } else { info = await PlaceInfo.lookup(fix: fix, cacheFor: url) }
+            if let cached = PlaceInfo.cached(for: url, matching: fix) {
+                info = cached.withAltitude(of: fix)
+                if info != cached { info.save(for: url) }   // refresh caches written before altitude existed
+            } else { info = await PlaceInfo.lookup(fix: fix, cacheFor: url) }
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.place = info
