@@ -492,7 +492,7 @@ extension PlayerModel {
         let flag = CancelFlag()
         job = flag
         exportProgress = 0
-        statusText = "Exporting…"
+        statusText = nil
         let audioIDs = audioOptions.filter(\.enabled).map(\.id)
         let mix = audioMix()
         let path = self.path
