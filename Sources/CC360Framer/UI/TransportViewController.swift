@@ -101,7 +101,7 @@ final class TransportViewController: ModelViewController {
         view = NSView()
         playButton = Kit.symbolButton("play.fill", tip: "Play / pause (space)", target: self, action: #selector(togglePlay))
         playButton.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        recordButton = Kit.symbolButton("record.circle", tip: "Record camera moves: while on, dragging and zooming the preview adds keyframes",
+        recordButton = Kit.symbolButton("record.circle.fill", tip: "Record camera moves: while on, dragging and zooming the preview adds keyframes",
                                         target: self, action: #selector(toggleRecord))
         recordButton.setButtonType(.pushOnPushOff)
         recordButton.widthAnchor.constraint(equalToConstant: 36).isActive = true
@@ -147,7 +147,7 @@ final class TransportViewController: ModelViewController {
 
     override func refresh() {
         playButton.image = Kit.symbol(model.isPlaying ? "pause.fill" : "play.fill", "Play / pause")
-        recordButton.image = Self.recordImage(filled: model.isRecording)
+        recordButton.image = Self.recordImage()
         recordButton.state = model.isRecording ? .on : .off
         recordButton.isEnabled = model.duration > 0
         positionLabel.stringValue = Kit.time(model.position)
@@ -162,10 +162,10 @@ final class TransportViewController: ModelViewController {
         ticks.needsDisplay = true
     }
 
-    /// The record symbol drawn in red by the symbol itself: a palette configuration is not overridden by the button's
-    /// tinting (`contentTintColor` is ignored for a pushed-in rounded button).
-    private static func recordImage(filled: Bool) -> NSImage {
-        let base = Kit.symbol(filled ? "record.circle.fill" : "record.circle", "Record camera moves")
+    /// `record.circle.fill` in both states (the pushed-in bezel shows that recording is on), drawn in red by the symbol itself:
+    /// a palette configuration is not overridden by the button's tinting (`contentTintColor` is ignored for a pushed-in rounded button).
+    private static func recordImage() -> NSImage {
+        let base = Kit.symbol("record.circle.fill", "Record camera moves")
         return base.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed])) ?? base
     }
 
