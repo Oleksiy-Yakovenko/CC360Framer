@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let documents: DocumentController
     private let launchFile: URL?
     private lazy var batchWindow = BatchWindowController()
+    /// There is only one welcome window at a time.
+    private var welcomeWindow: WelcomeWindowController?
 
     init(documents: DocumentController, launchFile: URL?) {
         self.documents = documents
@@ -23,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
+        documents.onDocumentAdded = { [weak self] in self?.welcomeWindow?.close() }
         // Before AppKit decides whether anything was opened (and the untitled-file hook below runs).
         if let launchFile {
             documents.open([launchFile])
@@ -48,6 +51,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             doc.documentWindowController?.saveState()
             doc.model.cleanup()
         }
+    }
+
+    /// Instead of an untitled document, the welcome window is shown at launch and when the app is activated without windows
+    /// (unless a file got opened, or is being reopened from the last session).
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        if documents.documents.isEmpty { showWelcome(nil) }
+        return true
+    }
+
+    @objc func showWelcome(_ sender: Any?) {
+        if welcomeWindow == nil {
+            welcomeWindow = WelcomeWindowController(
+                recents: { [documents] in documents.recentDocumentURLs },
+                open: { [documents] in documents.open([$0]) },
+                openOther: { [documents] in documents.openDocument(nil) })
+        }
+        welcomeWindow?.showWindow(nil)
+        welcomeWindow?.window?.makeKeyAndOrderFront(nil)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -142,6 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         add(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
         NSApp.windowsMenu = windows
+        let welcome = NSMenuItem(title: "Welcome to CC360Framer", action: #selector(showWelcome), keyEquivalent: "1")
+        welcome.keyEquivalentModifierMask = [.command, .shift]
+        welcome.target = self
+        windows.insertItem(welcome, at: 0)
+        windows.insertItem(.separator(), at: 1)
 
         NSApp.mainMenu = bar
     }
