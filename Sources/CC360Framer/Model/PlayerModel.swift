@@ -362,6 +362,8 @@ final class PlayerModel: ObservableObject {
     private var keysEdited = false
     private(set) var path = CameraPath(keys: [])
     private var sourceURL: URL?
+    /// The file as opened (not resolved through symlinks).
+    var documentURL: URL? { sourceURL }
     private var sourceAsset: AVURLAsset?
     private var sourceVideoTracks: [AVAssetTrack] = []
     var videoComposition: AVVideoComposition?

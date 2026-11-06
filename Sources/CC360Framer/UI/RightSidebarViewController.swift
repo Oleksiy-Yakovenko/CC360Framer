@@ -1,9 +1,10 @@
 import AVFoundation
 import AppKit
 
-/// Right sidebar: tabs for export, location card, keyframe inspector and audio tracks.
+/// Right sidebar: tabs for the document, export, location card, keyframe inspector and audio tracks.
 final class RightSidebarViewController: ModelViewController {
     private lazy var tabs: [(String, ModelViewController)] = [
+        ("Document", DocumentTabViewController(model: model)),
         ("Export", ExportTabViewController(model: model)),
         ("Location", LocationTabViewController(model: model)),
         ("Inspector", InspectorTabViewController(model: model)),
@@ -13,6 +14,43 @@ final class RightSidebarViewController: ModelViewController {
     override func loadView() {
         for (_, vc) in tabs { addChild(vc) }
         view = Kit.TabContainer(tabs.map { (title: $0.0, page: $0.1.view) })
+    }
+}
+
+/// The open file: its full path (as opened, selectable for copying) and a button that reveals it in Finder.
+final class DocumentTabViewController: ModelViewController {
+    private let pathLabel = NSTextField(wrappingLabelWithString: "")
+    private var revealButton = NSButton()
+
+    override func loadView() {
+        view = NSView()
+        pathLabel.isSelectable = true
+        pathLabel.lineBreakMode = .byCharWrapping
+        pathLabel.identifier = Kit.fullWidthID
+        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        revealButton = NSButton(image: Kit.symbol("arrow.right.circle", "Show in Finder"), target: self, action: #selector(reveal))
+        revealButton.isBordered = false
+        revealButton.toolTip = "Show in Finder"
+        revealButton.setContentHuggingPriority(.required, for: .horizontal)
+        let row = NSStackView(views: [pathLabel, revealButton])
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 6
+        row.identifier = Kit.fullWidthID
+        Kit.sidebarStack(in: view, [
+            Kit.title("File", tip: "Full path of the open video"),
+            row,
+        ], topAnchor: view.topAnchor)
+    }
+
+    override func refresh() {
+        pathLabel.stringValue = model.documentURL?.path ?? ""
+        revealButton.isEnabled = model.documentURL != nil
+    }
+
+    @objc private func reveal() {
+        guard let url = model.documentURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 
