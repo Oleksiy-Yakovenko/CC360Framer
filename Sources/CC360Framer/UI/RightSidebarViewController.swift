@@ -21,6 +21,7 @@ final class ExportTabViewController: ModelViewController {
     private let settingsView = ExportSettingsView()
     private let progressBar = NSProgressIndicator()
     private var frameCheck = NSButton()
+    private var cutsCheck = NSButton()
     private var fovCheck = NSButton()
     private let fovSlider = NSSlider(value: 70, minValue: 20, maxValue: 140, target: nil, action: nil)
     private let fovValue = NSTextField(labelWithString: "70°")
@@ -29,6 +30,8 @@ final class ExportTabViewController: ModelViewController {
         view = NSView()
         frameCheck = NSButton(checkboxWithTitle: "Show export frame", target: self, action: #selector(frameToggled))
         frameCheck.toolTip = "Outline the exported area in the preview and dim the rest. Preview only, never exported. The vertical field of view is the same, so a different aspect ratio changes the horizontal extent."
+        cutsCheck = NSButton(checkboxWithTitle: "Preview with cuts applied", target: self, action: #selector(cutsToggled))
+        cutsCheck.toolTip = "Playback skips the cut regions (without the crossfade). The seekbar still shows the whole source video. Saved per video."
         settingsView.onChange = { [weak self] in self?.model.exportSettings = $0 }
         progressBar.style = .bar
         progressBar.isIndeterminate = false
@@ -49,6 +52,7 @@ final class ExportTabViewController: ModelViewController {
             Kit.title("Export", tip: "Format and size used by the Export button in the toolbar. Saved per video and as the default for new videos."),
             settingsView,
             frameCheck,
+            cutsCheck,
             fovCheck,
             fovRow,
             progressBar,
@@ -58,6 +62,7 @@ final class ExportTabViewController: ModelViewController {
     override func refresh() {
         settingsView.settings = model.exportSettings
         frameCheck.state = model.showExportFrame ? .on : .off
+        cutsCheck.state = model.previewWithCuts ? .on : .off
         fovCheck.state = model.globalFov.enabled ? .on : .off
         fovSlider.isEnabled = model.globalFov.enabled
         fovSlider.doubleValue = Double(model.globalFov.degrees)
@@ -75,6 +80,8 @@ final class ExportTabViewController: ModelViewController {
         g.degrees = Float(fovSlider.doubleValue.rounded())
         model.globalFov = g
     }
+
+    @objc private func cutsToggled() { model.previewWithCuts = cutsCheck.state == .on }
 
     @objc private func frameToggled() { model.showExportFrame = frameCheck.state == .on }
 }

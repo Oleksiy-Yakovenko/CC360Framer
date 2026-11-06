@@ -175,6 +175,36 @@ struct CutTimeline: TimelineAdapter {
 }
 
 extension PlayerModel {
-    /// Placeholder until the preview skipping is wired up.
-    func updateCutPreview() {}
+    /// Preview with cuts applied: playback jumps over the cut regions (no crossfade in the preview; the seekbar keeps
+    /// showing the source timeline and scrubbing into a cut is still possible). Rebuilt whenever the cuts or the
+    /// checkbox change.
+    func updateCutPreview() {
+        if let cutObserver { player.removeTimeObserver(cutObserver) }
+        cutObserver = nil
+        guard previewWithCuts, player.currentItem != nil else { return }
+        let map = timeMap(crossfade: 0)
+        let points = map.jumpPoints
+        guard !points.isEmpty else { return }
+        let times = points.map { NSValue(time: CMTime(seconds: $0.from, preferredTimescale: 600)) }
+        cutObserver = player.addBoundaryTimeObserver(forTimes: times, queue: .main) { [weak self] in
+            MainActor.assumeIsolated { self?.skipCutIfNeeded() }
+        }
+        skipCutIfNeeded()
+    }
+
+    /// Moves the playhead out of a cut while playing with cuts applied (stops at the end of the clip).
+    func skipCutIfNeeded() {
+        guard previewWithCuts, isPlaying else { return }
+        let now = player.currentTime().seconds
+        let map = timeMap(crossfade: 0)
+        let target = map.skipTarget(forSource: now + 0.02)
+        guard target > now + 0.02 else { return }
+        if target >= duration - 0.02 {
+            player.pause()
+            isPlaying = false
+            scrub(to: duration); endScrub(at: duration)
+        } else {
+            scrub(to: target); endScrub(at: target)
+        }
+    }
 }

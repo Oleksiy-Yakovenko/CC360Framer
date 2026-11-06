@@ -63,6 +63,7 @@ final class PlayerModel: ObservableObject {
             selectedCut = s.selected
         })
     var cutDragStart: CutSnapshot?
+    var cutObserver: Any?
     /// Keyframes and selection as one undoable unit.
     struct KeySnapshot: Equatable { var keys: [Keyframe]; var selected: UUID? }
     private(set) lazy var undo = SnapshotUndo<KeySnapshot>(
@@ -300,6 +301,7 @@ final class PlayerModel: ObservableObject {
             selectedKey = nil
             autoFollow = !keyframes.isEmpty
             await player.seek(to: .zero)
+            updateCutPreview()
             if ProcessInfo.processInfo.environment["CC360_DEBUG"] != nil {
                 print("opened: \(options.map(\.label)), item status \(item.status.rawValue)"); fflush(stdout)
                 if let secs = Pacing.seconds {
@@ -444,6 +446,8 @@ final class PlayerModel: ObservableObject {
             if position >= duration - 0.05 { player.seek(to: .zero); position = 0 }
             player.play()
             isPlaying = true
+            skipCutIfNeeded()   // starting inside a cut with "Preview with cuts applied"
+
         }
     }
 
