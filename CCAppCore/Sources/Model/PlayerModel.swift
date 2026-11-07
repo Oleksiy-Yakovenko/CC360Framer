@@ -426,12 +426,17 @@ final class PlayerModel: ObservableObject {
     /// Player the `timeObserver` and `cutObserver` were added to.
     private var observedPlayer: AVPlayer?
     var scrubbing = false
+    /// When the last scrub position change happened (`CACurrentMediaTime`).
+    var lastScrubMove = 0.0
     /// Preview of the audio clips: a second player slaved to the main player's source time.
     lazy var clipPlayback: AudioClipPlayback = {
         let c = AudioClipPlayback()
         c.mainTime = { [weak self] in self?.player.currentTime().seconds ?? 0 }
         c.mainPlaying = { [weak self] in self?.isPlaying ?? false }
-        c.mainScrubbing = { [weak self] in self?.scrubbing ?? false }
+        c.mainScrubbing = { [weak self] in
+            guard let self else { return false }
+            return AudioClipSync.isActivelyScrubbing(scrubbing: self.scrubbing, secondsSinceLastScrubMove: CACurrentMediaTime() - self.lastScrubMove)
+        }
         c.mainRunning = { [weak self] in
             guard let p = self?.player else { return false }
             return p.rate > 0 && p.timeControlStatus == .playing
@@ -621,9 +626,10 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    func beginScrub() { scrubbing = true }
+    func beginScrub() { scrubbing = true; lastScrubMove = CACurrentMediaTime() }
 
     func scrub(to seconds: Double) {
+        lastScrubMove = CACurrentMediaTime()
         position = seconds
         clipPlayback.scrub(to: seconds)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),

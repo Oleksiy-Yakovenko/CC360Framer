@@ -153,4 +153,10 @@ final class AudioClipPlaybackTests: XCTestCase {
         clip.start = 2   // placement changed: the composition no longer fits
         XCTAssertNil(AudioExport.remix(built, clips: [clip], sourceDuration: 10))
     }
+
+    func testScrubOnlySilencesWhileThePositionMoves() {
+        XCTAssertTrue(AudioClipSync.isActivelyScrubbing(scrubbing: true, secondsSinceLastScrubMove: 0.05))
+        XCTAssertFalse(AudioClipSync.isActivelyScrubbing(scrubbing: true, secondsSinceLastScrubMove: 0.5), "mouse held still")
+        XCTAssertFalse(AudioClipSync.isActivelyScrubbing(scrubbing: false, secondsSinceLastScrubMove: 0))
+    }
 }

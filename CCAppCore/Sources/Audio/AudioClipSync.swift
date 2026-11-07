@@ -21,6 +21,13 @@ struct AudioClipSync {
     /// The clip player is started this much ahead of the main time (its start latency).
     var startLead = 0.05
 
+    /// A scrub only silences the clip player while the position keeps changing: the main player goes on playing while the
+    /// mouse is held still, and the clip player must follow it then.
+    static let scrubIdle = 0.25
+    static func isActivelyScrubbing(scrubbing: Bool, secondsSinceLastScrubMove: Double) -> Bool {
+        scrubbing && secondsSinceLastScrubMove < scrubIdle
+    }
+
     enum Action: Equatable {
         case seek(Double)
         case play
