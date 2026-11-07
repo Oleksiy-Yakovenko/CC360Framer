@@ -340,7 +340,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let timeField = NSTextField(), yawField = NSTextField(), pitchField = NSTextField(), fovField = NSTextField()
     private let cutStartField = NSTextField(), cutEndField = NSTextField()
-    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth] }
+    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth, audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
     private let cardTimeField = NSTextField()
     private var cardPlacementPopup = NSPopUpButton()
     private var cardOverrideCheck = NSButton()
@@ -353,6 +353,16 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private var ovFill = NSColorWell(), ovStroke = NSColorWell()
     private var ovReset = NSButton()
     private var keyForm: NSView!
+    private var audioFileForm: NSView!
+    private var audioForm: NSView!
+    private let audPath = NSTextField(), audStart = NSTextField(), audEnd = NSTextField(), audOffset = NSTextField()
+    private let audFadeIn = NSTextField(), audFadeOut = NSTextField()
+    private let audVolume = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    private var audVolumeRow: SliderField!
+    private var audBrowse = NSButton(), audReveal = NSButton()
+    private let audNote = NSTextField(wrappingLabelWithString: "")
+    private let probes = AudioProbeCache()
+    private var audioFields: [NSTextField] { [audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
     private var cutForm: NSView!
     private var cardForm: NSView!
     private var captionForm: NSView!
@@ -377,6 +387,33 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cardPlacementPopup = Kit.popup(OverlayPlacement.allCases.map(\.rawValue), tip: "Where this location card is placed (the Location tab's placement while the override is off)", target: self, action: #selector(commit))
         cardOverrideCheck = NSButton(checkboxWithTitle: "Override placement", target: self, action: #selector(cardOverrideToggled))
         cardOverrideCheck.toolTip = "Off: this card uses the placement chosen in the Location tab. On: it has its own placement."
+        for f in audioFields { f.action = #selector(audioFieldCommitted(_:)) }
+        audPath.alignment = .left
+        audPath.lineBreakMode = .byTruncatingMiddle
+        audPath.cell?.usesSingleLineMode = true
+        audPath.placeholderString = "Choose an audio file"
+        audPath.toolTip = "Full path of the audio file; type or paste a path and press Return, or use Browse…"
+        audStart.toolTip = "Start of the clip in seconds of the source video"
+        audEnd.toolTip = "End of the clip in seconds of the source video"
+        audOffset.toolTip = "Where playback starts inside the audio file, in seconds (0 to the file's length)"
+        audFadeIn.toolTip = "Fade-in length in seconds; fade in plus fade out cannot exceed the clip length"
+        audFadeOut.toolTip = "Fade-out length in seconds; fade in plus fade out cannot exceed the clip length"
+        audVolume.toolTip = "Volume of this clip in percent, 0 to 100"
+        audVolumeRow = Kit.sliderRow(audVolume, decimals: 0, step: 1, target: self, action: #selector(audioVolumeChanged(_:)))
+        audVolumeRow.toolTip = audVolume.toolTip
+        audBrowse = Kit.button("Browse…", tip: "Choose an audio file", target: self, action: #selector(audioBrowse))
+        audReveal = Kit.button("Show in Finder", tip: "Reveal the audio file in Finder", target: self, action: #selector(audioReveal))
+        let audButtons = NSStackView(views: [audBrowse, audReveal])
+        audButtons.orientation = .horizontal
+        audButtons.spacing = 8
+        audNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        audNote.textColor = .systemRed
+        audNote.identifier = Kit.fullWidthID
+        audNote.isHidden = true
+        probes.onChange = { [weak self] in self?.refresh() }
+        audioFileForm = Kit.grid([Kit.row("File", audPath), Kit.checkRow(audButtons)])
+        audioForm = Kit.grid([Kit.row("Start (s)", audStart), Kit.row("End (s)", audEnd), Kit.row("File start (s)", audOffset),
+                              Kit.row("Fade in (s)", audFadeIn), Kit.row("Fade out (s)", audFadeOut), Kit.row("Volume (%)", audVolumeRow)])
         keyForm = Kit.grid([Kit.row("Time (s)", timeField), Kit.row("Yaw (°)", yawField),
                             Kit.row("Pitch (°)", pitchField), Kit.row("FOV (°)", fovField)])
         cutForm = Kit.grid([Kit.row("Start (s)", cutStartField), Kit.row("End (s)", cutEndField)])
@@ -418,7 +455,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
                                 Kit.checkRow(ovReset)])
         cardForm = Kit.grid([Kit.row("Time (s)", cardTimeField), Kit.checkRow(cardOverrideCheck), Kit.row("Placement", cardPlacementPopup)])
         empty.identifier = Kit.fullWidthID
-        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm], topAnchor: view.topAnchor)
+        Kit.sidebarStack(in: view, [heading, empty, keyForm, cutForm, cardForm, captionForm, audioFileForm, audNote, audioForm], topAnchor: view.topAnchor)
     }
 
     private var shownItemID: UUID?
@@ -429,7 +466,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         let cut = kind == .cuts ? model.selectedCutRegion : nil
         let card = kind == .locationCards ? model.selectedCardKeyValue : nil
         let caption = kind == .captions ? model.selectedCaptionValue : nil
-        let audioClip = kind == .audio ? model.selectedAudioClipValue : nil   // no form yet: only the heading
+        let audioClip = kind == .audio ? model.selectedAudioClipValue : nil
         heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : kind == .captions ? "Caption"
             : kind == .audio ? "Audio clip" : "Keyframe"
         switch kind {
@@ -444,6 +481,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cutForm.isHidden = cut == nil
         cardForm.isHidden = card == nil
         captionForm.isHidden = caption == nil
+        audioFileForm.isHidden = audioClip == nil
+        audioForm.isHidden = audioClip == nil
+        if audioClip == nil { audNote.isHidden = true }
         // A different item than the one last shown: discard any edit in progress (abortEditing does not
         // fire the action, so the old text is never written into the new item), then show its values.
         let selectedID: UUID? = key?.id ?? cut?.id ?? card?.id ?? caption?.id ?? audioClip?.id
@@ -461,12 +501,86 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         }
         if let cut { show(cutStartField, cut.start, 2); show(cutEndField, cut.end, 2) }
         if let caption { showCaption(caption) }
+        if let audioClip { showAudio(audioClip, force: false) }
         if let card {
             show(cardTimeField, card.time, 2)
             cardOverrideCheck.state = card.placement != nil ? .on : .off
             cardPlacementPopup.isEnabled = card.placement != nil
             cardPlacementPopup.selectItem(at: OverlayPlacement.allCases.firstIndex(of: card.effectivePlacement(global: model.overlayPlacement)) ?? 0)
         }
+    }
+
+    private func showAudio(_ c: AudioClip, force: Bool) {
+        func show(_ f: NSTextField, _ x: Double) { if force || f.currentEditor() == nil { f.stringValue = String(format: "%.2f", x) } }
+        if force || audPath.currentEditor() == nil { audPath.stringValue = c.path }
+        show(audStart, c.start); show(audEnd, c.end); show(audOffset, c.fileOffset)
+        show(audFadeIn, c.fadeIn); show(audFadeOut, c.fadeOut)
+        audVolumeRow.setValue(AudioFileLogic.percent(fromVolume: c.volume))
+        let info = probes.info(for: c.path)
+        audReveal.isEnabled = info?.exists == true
+        if let problem = info?.problem {
+            audNote.stringValue = problem
+            audNote.isHidden = false
+        } else {
+            audNote.isHidden = true
+        }
+        if let d = info?.duration, info?.isUsable == true {
+            audPath.toolTip = "Full path of the audio file (length \(AudioFileLogic.formatDuration(d)))"
+        } else {
+            audPath.toolTip = "Full path of the audio file; type or paste a path and press Return, or use Browse…"
+        }
+    }
+
+    @objc private func audioFieldCommitted(_ f: NSTextField) {
+        guard let c = model.selectedAudioClipValue else { return }
+        let num = { (g: NSTextField, old: Double) in self.parse(g, old) }
+        switch f {
+        case audPath:
+            let p = (audPath.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+            if p != c.path {
+                probes.invalidate(p)
+                model.editSelectedAudioClip(name: "Change Audio File") { $0.path = p }
+            }
+        case audStart, audEnd:
+            model.editSelectedAudioClip(start: num(audStart, c.start), end: num(audEnd, c.end))
+        case audOffset:
+            let v = AudioFileLogic.clampOffset(num(audOffset, c.fileOffset), fileDuration: probes.info(for: c.path)?.duration)
+            model.editSelectedAudioClip(name: "Change Audio File Start") { $0.fileOffset = v }
+        case audFadeIn, audFadeOut:
+            let isIn = f === audFadeIn
+            let fi = isIn ? num(audFadeIn, c.fadeIn) : c.fadeIn, fo = isIn ? c.fadeOut : num(audFadeOut, c.fadeOut)
+            model.editSelectedAudioClip(name: isIn ? "Change Audio Fade In" : "Change Audio Fade Out") {
+                if let r = AudioClipEdit.setFades([$0], id: $0.id, fadeIn: fi, fadeOut: fo, keep: isIn ? .fadeIn : .fadeOut)?.first { $0 = r }
+            }
+        default: break
+        }
+        if let now = model.selectedAudioClipValue { showAudio(now, force: true) }   // rejected or clamped values snap back
+    }
+
+    @objc private func audioVolumeChanged(_ sender: Any?) {
+        let v = AudioFileLogic.volume(fromPercent: audVolume.doubleValue)
+        model.editSelectedAudioClip(name: "Change Audio Volume") { $0.volume = v }
+    }
+
+    @objc private func audioBrowse() {
+        guard let c = model.selectedAudioClipValue else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Choose an audio file for this clip"
+        if !c.path.isEmpty { panel.directoryURL = URL(fileURLWithPath: c.path).deletingLastPathComponent() }
+        else { panel.directoryURL = model.documentURL?.deletingLastPathComponent() }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        probes.invalidate(url.path)
+        model.editSelectedAudioClip(name: "Change Audio File") { $0.path = url.path }
+        refresh()
+    }
+
+    @objc private func audioReveal() {
+        guard let c = model.selectedAudioClipValue, FileManager.default.fileExists(atPath: c.path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: c.path)])
     }
 
     private func showCaption(_ c: Caption) {
@@ -518,6 +632,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
 
     func controlTextDidEndEditing(_ obj: Notification) {
         if let f = obj.object as? NSTextField, f === ovSize || f === ovStrokeWidth { overrideFieldCommitted(f) }
+        if let f = obj.object as? NSTextField, audioFields.contains(f) { audioFieldCommitted(f) }
     }
 
     @objc private func overrideFieldCommitted(_ f: NSTextField) {
