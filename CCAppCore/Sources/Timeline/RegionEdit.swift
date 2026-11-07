@@ -94,12 +94,113 @@ enum TimelineKind: String, CaseIterable {
     var isRegion: Bool { self == .cuts || self == .captions || self == .audio }
 }
 
-/// Seekbar geometry and hit testing, separate from drawing so it can be tested.
+/// Zoom, tick and autoscroll rules of the timeline strip (pure).
+enum TimelineWindow {
+    /// Zoomed in this far the ticks can reach milliseconds (`minTickStep`) on a normal strip width.
+    static let minVisible = 0.1
+    /// The finest tick step in seconds: 1 ms.
+    static let minTickStep = 0.001
+    static let defaultVisible = 30.0
+    /// Distance from the strip edge (px) where drag autoscroll starts.
+    static let autoscrollZone = 28.0
+    /// Closest allowed spacing in px of the ticks that are drawn fully; the finer decade fades out below it.
+    static let minTickSpacing = 6.0
+    /// Spacing in px at which the finer decade is gone completely.
+    static let fadeTickSpacing = 2.0
+    /// The window may be zoomed out to this many times the video length, so that the whole video fits even when the
+    /// playhead (the centre of the window) is at its start or end.
+    static let overviewFactor = 2.0
+
+    /// Window length limited to `minVisible` ... `overviewFactor` times the video (never below `minVisible`, also for tiny clips).
+    static func clampVisible(_ v: Double, duration: Double) -> Double {
+        let upper = max(duration * overviewFactor, minVisible)
+        guard v.isFinite else { return min(defaultVisible, upper) }
+        return max(minVisible, min(v, upper))
+    }
+
+    static func initialVisible(duration: Double) -> Double { clampVisible(min(defaultVisible, max(duration, minVisible)), duration: duration) }
+
+    /// Multiplicative zoom factor (to apply to the visible duration) for a wheel event. Positive delta zooms in.
+    /// Discrete wheels give about 1 per notch (10 % per notch), trackpads many small point deltas.
+    static func wheelFactor(deltaY: Double, precise: Bool) -> Double {
+        exp(-deltaY * (precise ? 0.01 : 0.1))
+    }
+
+    /// Factor for a pinch (`NSEvent.magnification`, positive = spread = zoom in).
+    static func magnifyFactor(_ magnification: Double) -> Double { 1 / max(1 + magnification, 0.1) }
+
+    /// Seconds between ticks, decimal like `PCBGridStep.decimalStep` in PCBDesigner: the smallest power of ten (1 ms, 10 ms,
+    /// ... 1 s, 10 s, 100 s, ...) whose spacing is at least `minTickSpacing` px, so every 10th tick of a level lands on a
+    /// round value.
+    static func tickStep(pixelsPerSecond: Double) -> Double {
+        guard pixelsPerSecond > 0 else { return 1e9 }
+        let minSeconds = minTickSpacing / pixelsPerSecond
+        let exponent = max(ceil(log10(minSeconds) - 1e-9), log10(minTickStep).rounded())
+        return pow(10, exponent)
+    }
+
+    /// Index of a tick of `step` (time = index * step).
+    static func tickIndex(_ time: Double, step: Double) -> Int { Int((time / step).rounded()) }
+
+    /// Every 10th tick of a level is a large one (it is also a tick of the next coarser decade).
+    static func isLargeTick(_ time: Double, step: Double) -> Bool { tickIndex(time, step: step) % 10 == 0 }
+
+    /// Label of a large tick: "m:ss" for whole seconds, with as many decimals as the spacing of the large ticks needs
+    /// (`step` is the step of the small ticks, large ticks are 10x further apart): "0:12.5", "0:12.05", "0:12.005".
+    static func largeTickText(_ time: Double, step: Double) -> String {
+        let decimals = max(0, Int((-log10(step * 10)).rounded()))
+        return TimelineLayout.timeText(time, decimals: decimals)
+    }
+
+    /// Opacity (0...1) of the ticks of the next finer decade (`step / 10`): fully visible just when that decade is
+    /// dense enough to be the step itself, fading out as it gets denser, gone below `fadeTickSpacing`. 0 when there is
+    /// no finer decade (the step is the finest, 1 ms).
+    static func fineTickAlpha(pixelsPerSecond: Double, step: Double) -> Double {
+        guard step > minTickStep * 1.5 else { return 0 }
+        let spacing = step / 10 * pixelsPerSecond
+        return max(0, min(1, (spacing - fadeTickSpacing) / (minTickSpacing - fadeTickSpacing)))
+    }
+
+    /// Multiples of `step` (absolute time) inside `range` and `0...duration`.
+    static func ticks(in range: ClosedRange<Double>, step: Double, duration: Double) -> [Double] {
+        guard step > 0, duration >= 0 else { return [] }
+        let lo = max(range.lowerBound, 0), hi = min(range.upperBound, duration)
+        guard lo <= hi else { return [] }
+        var out: [Double] = []
+        var k = (lo / step).rounded(.up)
+        while k * step <= hi + 1e-9 && out.count < 10_000 { out.append(k * step); k += 1 }
+        return out
+    }
+
+    /// Autoscroll speed in seconds of timeline per second while a drag is held near an edge: 0 farther than the zone
+    /// from the edge, 0.4 visible-seconds per second at the edge, growing linearly with overshoot (capped at 3x the zone depth).
+    /// Negative (towards the start) at the left edge.
+    static func autoscrollSpeed(pointerX: Double, width: Double, visible: Double) -> Double {
+        guard width > 0 else { return 0 }
+        let leftDepth = (autoscrollZone - pointerX) / autoscrollZone
+        let rightDepth = (pointerX - (width - autoscrollZone)) / autoscrollZone
+        if leftDepth > 0 { return -0.4 * visible * min(leftDepth, 3) }
+        if rightDepth > 0 { return 0.4 * visible * min(rightDepth, 3) }
+        return 0
+    }
+}
+
+/// Strip geometry and hit testing, separate from drawing so it can be tested. The strip shows `visible` seconds centred
+/// on `center`, so the time at the horizontal middle is `center` (the playhead); x and time are not clamped to the video.
 struct TimelineLayout {
     var width: Double
     var duration: Double
-    var inset = 8.0          // slider thumb radius, so markers line up with the thumb
+    var center: Double
+    var visible: Double
     var handleSlop = 6.0     // how close a click must be to a region edge to grab it
+
+    /// `visible` defaults to the whole `duration`, `center` to 0.
+    init(width: Double, duration: Double, center: Double = 0, visible: Double? = nil) {
+        self.width = width
+        self.duration = duration
+        self.center = center
+        self.visible = max(visible ?? duration, 0.1)
+    }
 
     enum Hit: Equatable {
         case point(UUID)
@@ -108,8 +209,35 @@ struct TimelineLayout {
         case regionEnd(UUID)
     }
 
-    func x(_ time: Double) -> Double { inset + max(width - inset * 2, 1) * time / max(duration, 0.1) }
-    func time(_ x: Double) -> Double { max(0, min(duration, (x - inset) / max(width - inset * 2, 1) * max(duration, 0.1))) }
+    var pixelsPerSecond: Double { max(width, 1) / visible }
+    func x(_ time: Double) -> Double { width / 2 + (time - center) * pixelsPerSecond }
+    func time(_ x: Double) -> Double { center + (x - width / 2) / pixelsPerSecond }
+    /// Times shown by the window.
+    var visibleRange: ClosedRange<Double> { time(0)...time(width) }
+
+    /// The ONE place that places the playhead: always the horizontal centre.
+    var playheadX: Double { width / 2 }
+
+    /// Left edge of a label of `labelWidth` centred on `centerX`, kept inside 0...width.
+    func labelOriginX(centerX: Double, labelWidth: Double) -> Double {
+        max(0, min(centerX - labelWidth / 2, max(width - labelWidth, 0)))
+    }
+
+    /// "m:ss", or "h:mm:ss" from one hour on.
+    static func timeText(_ seconds: Double) -> String {
+        let t = Int(max(seconds.isFinite ? seconds : 0, 0))
+        return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
+    }
+
+    /// "m:ss.fff" with `decimals` decimals (0 = "m:ss"), "h:mm:ss.fff" from one hour on. Rounded to the shown precision.
+    static func timeText(_ seconds: Double, decimals: Int) -> String {
+        guard decimals > 0 else { return timeText(seconds) }
+        let scale = pow(10.0, Double(decimals))
+        let units = Int((max(seconds.isFinite ? seconds : 0, 0) * scale).rounded())
+        let whole = units / Int(scale), frac = units % Int(scale)
+        let base = whole >= 3600 ? String(format: "%d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60) : String(format: "%d:%02d", whole / 60, whole % 60)
+        return base + "." + String(format: "%0\(decimals)d", frac)
+    }
 
     /// What a click at `x` grabs. The selected region's edges win, then any region edge, then region bodies, then points.
     func hit(_ items: [TimelineItem], selected: UUID?, at px: Double) -> Hit? {

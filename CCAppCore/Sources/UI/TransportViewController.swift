@@ -19,8 +19,24 @@ final class TimelineMarkersView: NSView {
     var adapter: TimelineAdapter?
     var items: [TimelineItem] = []
     var selected: UUID?
-    var duration: Double = 0
+    var duration: Double = 0 {
+        didSet {
+            if oldValue != duration { visibleDuration = TimelineWindow.initialVisible(duration: duration) }
+        }
+    }
+    /// Current time, shown by the orange playhead at the horizontal centre (same value as the seekbar thumb); the window is centred on it.
+    var playhead: Double = 0
+    /// Seconds shown across the strip (wheel / pinch zoom; per session, not persisted).
+    var visibleDuration: Double = TimelineWindow.defaultVisible
+    /// Scrub hooks used while a drag autoscrolls (the controller forwards them to the model).
+    var onScrubBegin: (() -> Void)?
+    var onScrub: ((Double) -> Void)?
+    var onScrubEnd: ((Double) -> Void)?
     private var dragging: (id: UUID, edge: RegionEdit.Edge)?
+    private var dragX: Double = 0
+    private var autoscrollTimer: Timer?
+    private var autoscrollLast = CACurrentMediaTime()
+    private var scrubStarted = false
 
     override var isFlipped: Bool { true }
     /// Height of the strip above the seekbar.
@@ -30,12 +46,21 @@ final class TimelineMarkersView: NSView {
     private static let handleWidth: CGFloat = 4
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height) }
 
-    private var layoutInfo: TimelineLayout { TimelineLayout(width: bounds.width, duration: duration) }
+    private var layoutInfo: TimelineLayout {
+        TimelineLayout(width: bounds.width, duration: duration, center: playhead, visible: TimelineWindow.clampVisible(visibleDuration, duration: duration))
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         bounds.fill()
         let l = layoutInfo
+        // The video's own span is lighter than the empty area before 0 and after the end.
+        let x0 = max(l.x(0), 0), x1 = min(l.x(duration), bounds.width)
+        if x1 > x0 {
+            NSColor(white: 0.13, alpha: 1).setFill()
+            NSRect(x: x0, y: 0, width: x1 - x0, height: bounds.height).fill()
+        }
+        drawTicks(l)
         let overlapping = adapter?.kind == .audio   // clips may overlap: translucent bars with an outline, selected one on top
         for item in items.sorted(by: { ($0.id == selected ? 1 : 0) < ($1.id == selected ? 1 : 0) }) {
             let isSel = item.id == selected
@@ -73,6 +98,46 @@ final class TimelineMarkersView: NSView {
                 path.fill()
             }
         }
+        drawPlayhead(l)
+    }
+
+    /// Dark grey ticks along the bottom, one per step (1 s, thinned when zoomed out), aligned to multiples of the step.
+    private func drawTicks(_ l: TimelineLayout) {
+        let step = TimelineWindow.tickStep(pixelsPerSecond: l.pixelsPerSecond)
+        func draw(_ t: Double, _ h: CGFloat) { NSRect(x: l.x(t).rounded() - 0.5, y: bounds.height - h, width: 1, height: h).fill() }
+        // The finer decade fades out as it gets too dense; its ticks that coincide with the step's are drawn by the step.
+        let fine = TimelineWindow.fineTickAlpha(pixelsPerSecond: l.pixelsPerSecond, step: step)
+        if fine > 0 {
+            NSColor(white: 0.45, alpha: fine).setFill()
+            for t in TimelineWindow.ticks(in: l.visibleRange, step: step / 10, duration: duration)
+            where !TimelineWindow.isLargeTick(t, step: step / 10) { draw(t, 3) }
+        }
+        NSColor(white: 0.45, alpha: 1).setFill()
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+                                                    .foregroundColor: NSColor(white: 0.6, alpha: 1)]
+        for t in TimelineWindow.ticks(in: l.visibleRange, step: step, duration: duration) {
+            let large = TimelineWindow.isLargeTick(t, step: step)
+            draw(t, large ? 9 : 5)
+            if large {   // the timestamp sits right of the large tick, in the band below the region bars
+                NSAttributedString(string: TimelineWindow.largeTickText(t, step: step), attributes: attrs)
+                    .draw(at: NSPoint(x: l.x(t).rounded() + 3, y: bounds.height - 12))
+            }
+        }
+    }
+
+    /// Orange line at the current time with a small time pill on top. Drawn only; `hitTest`/mouse handling ignore it.
+    private func drawPlayhead(_ l: TimelineLayout) {
+        let x = l.playheadX.rounded() + 0.5
+        NSColor.systemOrange.setFill()
+        NSRect(x: x - 1, y: 0, width: 2, height: bounds.height).fill()
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor(white: 0.1, alpha: 1)]
+        let text = NSAttributedString(string: TimelineLayout.timeText(playhead), attributes: attrs)
+        let ts = text.size()
+        let w = ceil(ts.width) + 10, h = ceil(ts.height) + 2
+        let pill = NSRect(x: l.labelOriginX(centerX: x, labelWidth: w), y: 2, width: w, height: h)
+        NSColor(white: 0.95, alpha: 0.95).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: h / 2, yRadius: h / 2).fill()
+        text.draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -93,14 +158,80 @@ final class TimelineMarkersView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let adapter, let d = dragging else { return }
-        adapter.drag(d.id, edge: d.edge, to: layoutInfo.time(convert(event.locationInWindow, from: nil).x))
+        guard dragging != nil else { return }
+        dragX = convert(event.locationInWindow, from: nil).x
+        applyDrag()
+        updateAutoscrollTimer()
     }
 
     override func mouseUp(with event: NSEvent) {
+        stopAutoscroll()
         guard dragging != nil else { return }
         dragging = nil
         adapter?.endDrag()
+        if scrubStarted {
+            scrubStarted = false
+            onScrubEnd?(playhead)
+        }
+    }
+
+    /// Moves the dragged edge to the time under the pointer in the current window.
+    private func applyDrag() {
+        guard let adapter, let d = dragging else { return }
+        adapter.drag(d.id, edge: d.edge, to: layoutInfo.time(dragX))
+    }
+
+    private func updateAutoscrollTimer() {
+        let speed = TimelineWindow.autoscrollSpeed(pointerX: dragX, width: bounds.width, visible: layoutInfo.visible)
+        if speed == 0 { stopAutoscroll(); return }
+        guard autoscrollTimer == nil else { return }
+        autoscrollLast = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            MainActor.assumeIsolated { self.autoscrollTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autoscrollTimer = timer
+    }
+
+    private func stopAutoscroll() {
+        autoscrollTimer?.invalidate()
+        autoscrollTimer = nil
+    }
+
+    /// While the pointer is held near an edge the playhead (and so the window) moves; the edge follows the pointer's time.
+    private func autoscrollTick() {
+        let now = CACurrentMediaTime()
+        let dt = min(now - autoscrollLast, 0.1)
+        autoscrollLast = now
+        guard dragging != nil else { stopAutoscroll(); return }
+        let speed = TimelineWindow.autoscrollSpeed(pointerX: dragX, width: bounds.width, visible: layoutInfo.visible)
+        if speed == 0 { stopAutoscroll(); return }
+        let t = max(0, min(duration, playhead + speed * dt))
+        guard t != playhead else { return }
+        if !scrubStarted { scrubStarted = true; onScrubBegin?() }
+        playhead = t
+        onScrub?(t)
+        applyDrag()
+        needsDisplay = true
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let dy = Double(event.scrollingDeltaY)
+        guard duration > 0, dy != 0 else { return }   // handled either way: never scroll the surrounding UI
+        zoom(by: TimelineWindow.wheelFactor(deltaY: dy, precise: event.hasPreciseScrollingDeltas))
+    }
+
+    override func magnify(with event: NSEvent) {
+        guard duration > 0 else { return }
+        zoom(by: TimelineWindow.magnifyFactor(Double(event.magnification)))
+    }
+
+    private func zoom(by factor: Double) {
+        let v = TimelineWindow.clampVisible(visibleDuration * factor, duration: duration)
+        guard v != visibleDuration else { return }
+        visibleDuration = v
+        needsDisplay = true
     }
 }
 
@@ -139,9 +270,12 @@ final class TransportViewController: ModelViewController {
         }
 
         slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        ticks.onScrubBegin = { [weak self] in self?.model.beginScrub() }
+        ticks.onScrub = { [weak self] t in self?.model.scrub(to: t) }
+        ticks.onScrubEnd = { [weak self] t in self?.model.endScrub(at: t) }
 
-        // The strip is not part of the row, so the play button and labels stay centred on the slider; its edges are
-        // pinned to the slider's, so times map to the same x as the thumb.
+        // The strip is not part of the row (the play button and labels stay centred on the slider) and spans the whole width
+        // of the container: it shows a zoomable window centred on the playhead, so it need not line up with the slider.
         let row = NSStackView(views: [playButton, recordButton, positionLabel, slider, durationLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -151,8 +285,8 @@ final class TransportViewController: ModelViewController {
         ticks.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(ticks)
         NSLayoutConstraint.activate([
-            ticks.leadingAnchor.constraint(equalTo: slider.leadingAnchor),
-            ticks.trailingAnchor.constraint(equalTo: slider.trailingAnchor),
+            ticks.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            ticks.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ticks.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
             ticks.heightAnchor.constraint(equalToConstant: TimelineMarkersView.height),
             row.topAnchor.constraint(equalTo: ticks.bottomAnchor, constant: 4),
@@ -176,6 +310,7 @@ final class TransportViewController: ModelViewController {
         ticks.items = timeline.items
         ticks.selected = timeline.selected
         ticks.duration = model.duration
+        ticks.playhead = dragging ? slider.doubleValue : model.position
         ticks.needsDisplay = true
     }
 
@@ -188,5 +323,9 @@ final class TransportViewController: ModelViewController {
 
     @objc private func togglePlay() { model.togglePlay() }
     @objc private func toggleRecord() { model.toggleRecording() }
-    @objc private func scrubbed() { model.scrub(to: slider.doubleValue) }
+    @objc private func scrubbed() {
+        ticks.playhead = slider.doubleValue
+        ticks.needsDisplay = true
+        model.scrub(to: slider.doubleValue)
+    }
 }

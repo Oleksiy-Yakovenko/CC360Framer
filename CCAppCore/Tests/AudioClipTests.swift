@@ -120,7 +120,7 @@ final class AudioClipTests: XCTestCase {
     func testTimelineKindAndHitTesting() {
         XCTAssertTrue(TimelineKind.audio.isRegion)
         XCTAssertEqual(TimelineKind.audio.rawValue, "Audio")
-        let l = TimelineLayout(width: 1016, duration: 100)   // 1 px per 0.1 s after the 8 px inset: x = 8 + 10 t
+        let l = TimelineLayout(width: 1000, duration: 100)   // 10 px per second
         let a = TimelineItem(id: UUID(), start: 10, end: 50), b = TimelineItem(id: UUID(), start: 20, end: 60)
         let px = l.x(30)
         XCTAssertEqual(l.hit([a, b], selected: nil, at: px), .region(b.id))   // latest wins

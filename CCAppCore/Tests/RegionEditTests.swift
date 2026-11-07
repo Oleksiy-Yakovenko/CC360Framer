@@ -68,14 +68,103 @@ final class RegionEditTests: XCTestCase {
     }
 
     func testLayoutMapping() {
-        let l = TimelineLayout(width: 216, duration: 10)
-        XCTAssertEqual(l.x(0), 8); XCTAssertEqual(l.x(10), 208)
-        XCTAssertEqual(l.time(108), 5, accuracy: 1e-9)
-        XCTAssertEqual(l.time(-50), 0); XCTAssertEqual(l.time(999), 10)
+        let l = TimelineLayout(width: 200, duration: 100, center: 50, visible: 20)   // 10 px per second, 40...60 s
+        XCTAssertEqual(l.x(50), 100); XCTAssertEqual(l.x(40), 0); XCTAssertEqual(l.x(60), 200)
+        XCTAssertEqual(l.time(150), 55, accuracy: 1e-9)
+        XCTAssertEqual(l.time(l.x(12.5)), 12.5, accuracy: 1e-9)
+        XCTAssertEqual(l.visibleRange, 40...60)
+        // Near the start the window reaches before 0 (negative times, not clamped).
+        let s = TimelineLayout(width: 200, duration: 100, center: 0, visible: 20)
+        XCTAssertEqual(s.x(0), 100); XCTAssertEqual(s.time(0), -10, accuracy: 1e-9)
+        // Default window is the whole clip.
+        XCTAssertEqual(TimelineLayout(width: 100, duration: 10).visible, 10)
+    }
+
+    func testWindowZoomAndTicks() {
+        XCTAssertEqual(TimelineWindow.clampVisible(0.01, duration: 100), 0.1)
+        XCTAssertEqual(TimelineWindow.clampVisible(0.5, duration: 100), 0.5)
+        XCTAssertEqual(TimelineWindow.clampVisible(500, duration: 100), 200)   // zoom out to twice the video: all of it fits at either end
+        XCTAssertEqual(TimelineWindow.clampVisible(150, duration: 100), 150)
+        XCTAssertEqual(TimelineWindow.clampVisible(5, duration: 0.01), 0.1)
+        XCTAssertEqual(TimelineWindow.clampVisible(5, duration: 1), 2)
+        XCTAssertEqual(TimelineWindow.initialVisible(duration: 600), 30)
+        XCTAssertEqual(TimelineWindow.initialVisible(duration: 12), 12)
+        XCTAssertLessThan(TimelineWindow.wheelFactor(deltaY: 1, precise: false), 1)   // zoom in
+        XCTAssertGreaterThan(TimelineWindow.wheelFactor(deltaY: -1, precise: false), 1)
+        XCTAssertEqual(TimelineWindow.wheelFactor(deltaY: 0, precise: true), 1)
+        XCTAssertLessThan(TimelineWindow.magnifyFactor(0.2), 1)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 20), 1)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 100), 0.1)      // sub-second decades down to milliseconds
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 1000), 0.01)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 10000), 0.001, accuracy: 1e-12)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 1e6), 0.001, accuracy: 1e-12)   // never finer than 1 ms
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 1e6, step: 0.001), 0)
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 500, step: 0.1), (5 - 2) / 4.0, accuracy: 1e-9)   // 10 ms ticks 5 px apart
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 6), 1)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 3), 10)     // decades only: 1, 10, 100, 1000 s
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 0.6), 10)   // 6 px per 10 s
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 0.5), 100)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 0.1), 100)
+        XCTAssertEqual(TimelineWindow.tickStep(pixelsPerSecond: 0.05), 1000)
+        // The finer decade: invisible for 1 s steps, full when it just fits, fading while it gets denser, gone at 2 px.
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 20, step: 1), 0)
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 3, step: 10), 0.25, accuracy: 1e-9)   // 1 s ticks 3 px apart
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 6, step: 10), 1)
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 0.5, step: 100), 0.75, accuracy: 1e-9)   // 10 s ticks 5 px apart
+        XCTAssertEqual(TimelineWindow.fineTickAlpha(pixelsPerSecond: 0.1, step: 100), 0)
+        XCTAssertEqual(TimelineWindow.ticks(in: 3.2...8.1, step: 2, duration: 100), [4, 6, 8])
+        XCTAssertEqual(TimelineWindow.ticks(in: -5...3, step: 1, duration: 100), [0, 1, 2, 3])
+        XCTAssertEqual(TimelineWindow.ticks(in: 8...20, step: 5, duration: 10), [10])
+        XCTAssertEqual(TimelineWindow.ticks(in: 12...20, step: 5, duration: 10), [])
+    }
+
+    func testLargeTicksAndTimestamps() {
+        XCTAssertTrue(TimelineWindow.isLargeTick(10, step: 1))
+        XCTAssertFalse(TimelineWindow.isLargeTick(7, step: 1))
+        XCTAssertTrue(TimelineWindow.isLargeTick(12.3, step: 0.1) == false)
+        XCTAssertTrue(TimelineWindow.isLargeTick(12, step: 0.1))          // floating point: 120 * 0.1
+        XCTAssertTrue(TimelineWindow.isLargeTick(0.07 + 0.03, step: 0.01))
+        XCTAssertTrue(TimelineWindow.isLargeTick(0, step: 0.001))
+        XCTAssertEqual(TimelineWindow.largeTickText(120, step: 10), "2:00")
+        XCTAssertEqual(TimelineWindow.largeTickText(10, step: 1), "0:10")
+        XCTAssertEqual(TimelineWindow.largeTickText(12, step: 0.1), "0:12")         // large ticks every 1 s: whole seconds
+        XCTAssertEqual(TimelineWindow.largeTickText(12.5, step: 0.01), "0:12.5")     // every 0.1 s
+        XCTAssertEqual(TimelineWindow.largeTickText(12.05, step: 0.001), "0:12.05")  // every 0.01 s
+        XCTAssertEqual(TimelineLayout.timeText(59.96, decimals: 1), "1:00.0")
+        XCTAssertEqual(TimelineLayout.timeText(3725.25, decimals: 2), "1:02:05.25")
+        XCTAssertEqual(TimelineLayout.timeText(5.004, decimals: 3), "0:05.004")
+        XCTAssertEqual(TimelineLayout.timeText(5.4, decimals: 0), "0:05")
+        XCTAssertEqual(TimelineLayout.timeText(-1, decimals: 2), "0:00.00")
+    }
+
+    func testAutoscrollSpeed() {
+        let w = 400.0, v = 30.0
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: 200, width: w, visible: v), 0)
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: 28, width: w, visible: v), 0)
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: 0, width: w, visible: v), -12, accuracy: 1e-9)
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: 400, width: w, visible: v), 12, accuracy: 1e-9)
+        XCTAssertGreaterThan(TimelineWindow.autoscrollSpeed(pointerX: 380, width: w, visible: v), 0)
+        XCTAssertLessThan(TimelineWindow.autoscrollSpeed(pointerX: 380, width: w, visible: v), 12)
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: -500, width: w, visible: v), -36, accuracy: 1e-9)   // capped
+        XCTAssertEqual(TimelineWindow.autoscrollSpeed(pointerX: 0, width: w, visible: 60), -24, accuracy: 1e-9)   // scales with zoom
+    }
+
+    func testPlayheadAndLabel() {
+        let l = TimelineLayout(width: 216, duration: 10, center: 5, visible: 4)
+        XCTAssertEqual(l.playheadX, 108)
+        XCTAssertEqual(l.x(5), l.playheadX)
+        XCTAssertEqual(l.labelOriginX(centerX: 108, labelWidth: 40), 88)
+        XCTAssertEqual(l.labelOriginX(centerX: 8, labelWidth: 40), 0)       // clamped left
+        XCTAssertEqual(l.labelOriginX(centerX: 208, labelWidth: 40), 176)   // clamped right
+        XCTAssertEqual(l.labelOriginX(centerX: 5, labelWidth: 300), 0)      // wider than the strip
+        XCTAssertEqual(TimelineLayout.timeText(710), "11:50")
+        XCTAssertEqual(TimelineLayout.timeText(-3), "0:00")
+        XCTAssertEqual(TimelineLayout.timeText(3599.9), "59:59")
+        XCTAssertEqual(TimelineLayout.timeText(3725), "1:02:05")
     }
 
     func testHitTesting() {
-        let l = TimelineLayout(width: 216, duration: 10)   // 20 px per second
+        let l = TimelineLayout(width: 200, duration: 10)   // 20 px per second
         let r1 = TimelineItem(id: UUID(), start: 2, end: 4), r2 = TimelineItem(id: UUID(), start: 4.1, end: 8)
         let k = TimelineItem(id: UUID(), start: 9, end: nil)
         let items = [r1, r2, k]
