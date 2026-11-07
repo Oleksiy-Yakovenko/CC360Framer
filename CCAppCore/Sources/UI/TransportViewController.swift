@@ -14,9 +14,11 @@ final class ScrubSlider: NSSlider {
 }
 
 /// Markers of the active timeline on a black strip above the seekbar: diamonds for points, bars with draggable edges for regions.
-/// Click selects (and seeks); dragging a region edge resizes it.
+/// A click selects (it does not move the playhead and shows the Inspector tab); dragging a region edge resizes it, the body moves it.
 final class TimelineMarkersView: NSView {
     var adapter: TimelineAdapter?
+    /// Called when a click selects an object (the window then shows its Inspector tab).
+    var onUserSelect: (() -> Void)?
     var items: [TimelineItem] = []
     var selected: UUID?
     var duration: Double = 0 {
@@ -164,7 +166,8 @@ final class TimelineMarkersView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let adapter else { return }
         let p = convert(event.locationInWindow, from: nil)
-        switch layoutInfo.hit(items, selected: selected, at: p.x) {
+        let hit = layoutInfo.hit(items, selected: selected, at: p.x)
+        switch hit {
         case .point(let id): adapter.selectQuietly(id)   // a click selects; it never moves the playhead or the window
         case .region(let id):
             // A click only selects (no seek: the window stays where it is); dragging the body moves the region.
@@ -176,6 +179,7 @@ final class TimelineMarkersView: NSView {
         case .regionEnd(let id): startDrag(adapter, id, .end)
         case nil: break
         }
+        if case .some = hit { onUserSelect?() }
     }
 
     private func startDrag(_ adapter: TimelineAdapter, _ id: UUID, _ edge: RegionEdit.Edge) {
@@ -288,6 +292,11 @@ final class TransportViewController: ModelViewController {
     private let slider = ScrubSlider()
     private let ticks = TimelineMarkersView()
     private var dragging = false
+    /// Called when a click on the timeline strip selects an object.
+    var onSelectItem: (() -> Void)? {
+        get { ticks.onUserSelect }
+        set { ticks.onUserSelect = newValue }
+    }
 
     override func loadView() {
         view = NSView()

@@ -203,7 +203,11 @@ final class MainViewController: NSSplitViewController, NSToolbarDelegate {
         leftItem = SidebarLayout.sidebarItem(LeftSidebarViewController(model: model), inspector: false, min: 200, max: 400,
                                              to: self, window: window)
         _ = SidebarLayout.contentItem(center, to: self, window: window)
-        inspectorItem = SidebarLayout.sidebarItem(RightSidebarViewController(model: model), inspector: true, min: 280, max: 600,
+        let right = RightSidebarViewController(model: model)
+        // Selecting an object on the timeline (click, previous / next) shows its settings in the Inspector tab.
+        center.transport.onSelectItem = { [weak right] in right?.showInspector() }
+        center.timelineBar.onSelectItem = { [weak right] in right?.showInspector() }
+        inspectorItem = SidebarLayout.sidebarItem(right, inspector: true, min: 280, max: 600,
                                                   to: self, window: window)
         window.contentView?.layoutSubtreeIfNeeded()
         apply(layout)

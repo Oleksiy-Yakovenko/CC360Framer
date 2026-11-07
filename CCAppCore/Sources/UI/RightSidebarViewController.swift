@@ -11,10 +11,17 @@ final class RightSidebarViewController: ModelViewController {
         ("Export", "arrowshape.up.fill", "Export Settings", ExportTabViewController(model: model)),
     ]
 
+    private var container: Kit.TabContainer?
+
     override func loadView() {
         for t in tabs { addChild(t.vc) }
-        view = Kit.TabContainer(tabs.map { (title: $0.title, symbol: $0.symbol, tip: $0.tip, page: $0.vc.view) })
+        let c = Kit.TabContainer(tabs.map { (title: $0.title, symbol: $0.symbol, tip: $0.tip, page: $0.vc.view) })
+        container = c
+        view = c
     }
+
+    /// Switches to the Inspector tab (selecting an object on the timeline shows its settings there).
+    func showInspector() { container?.select(0) }
 }
 
 /// The open file: its full path (as opened, selectable for copying) and a button that reveals it in Finder.

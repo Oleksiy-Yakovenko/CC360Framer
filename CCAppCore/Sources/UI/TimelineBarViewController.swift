@@ -2,6 +2,8 @@ import AppKit
 
 /// Bottom bar: a popup picks the active timeline (keyframes, cuts, ...); the buttons act on it through its `TimelineAdapter`.
 final class TimelineBarViewController: ModelViewController {
+    /// Called after the previous / next buttons selected an object.
+    var onSelectItem: (() -> Void)?
     private var popup = NSPopUpButton()
     private var previousButton = NSButton()
     private var nextButton = NSButton()
@@ -95,6 +97,9 @@ final class TimelineBarViewController: ModelViewController {
     /// Jumps to the nearest item before or after the playhead.
     private func jump(forward: Bool) {
         let t = model.timeline
-        if let target = TimelineNav.neighbor(t.items, of: model.position, forward: forward) { t.select(target.id) }
+        if let target = TimelineNav.neighbor(t.items, of: model.position, forward: forward) {
+            t.select(target.id)
+            onSelectItem?()
+        }
     }
 }
