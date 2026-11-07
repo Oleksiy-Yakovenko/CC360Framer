@@ -47,7 +47,11 @@ final class DocumentController: NSDocumentController {
 
     override func addDocument(_ document: NSDocument) {
         super.addDocument(document)
-        if let url = document.fileURL { store?.add(url) }
+        if let url = document.fileURL {
+            store?.add(url)
+            // AppKit records it when a document is opened through openDocument(withContentsOf:), not when one is only added.
+            noteNewRecentDocumentURL(url)
+        }
         onDocumentAdded?()
     }
 

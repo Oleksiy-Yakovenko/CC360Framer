@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let documents: DocumentController
     private let launchFile: URL?
     private lazy var batchWindow = BatchWindowController()
@@ -72,6 +72,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         welcomeWindow?.window?.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: Open Recent
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "Open Recent" else { return }
+        menu.removeAllItems()
+        let entries = RecentDocumentEntry.entries(from: documents.recentDocumentURLs)
+        for (entry, title) in zip(entries, RecentDocumentEntry.menuTitles(entries)) {
+            let item = NSMenuItem(title: title, action: #selector(openRecent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = entry.url
+            menu.addItem(item)
+        }
+        if entries.isEmpty {
+            let none = NSMenuItem(title: "No Recent Documents", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        let clear = NSMenuItem(title: "Clear Menu", action: #selector(NSDocumentController.clearRecentDocuments(_:)), keyEquivalent: "")
+        clear.target = documents
+        clear.isEnabled = !entries.isEmpty
+        menu.addItem(clear)
+    }
+
+    @objc func openRecent(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { documents.open([url]) }
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     // MARK: Actions (menu and toolbar)
@@ -133,9 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let file = submenu("File")
         add(file, "Open…", #selector(NSDocumentController.openDocument(_:)), "o", target: documents)
         let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        // A menu built in code is not AppKit's recent-documents menu (a XIB marks it with systemMenu="recentDocuments"), so it
+        // is filled from the document controller's recent URLs whenever it opens.
         let recentMenu = NSMenu(title: "Open Recent")
-        // AppKit fills the menu with the recent documents when it has this item.
-        recentMenu.addItem(withTitle: "Clear Menu", action: #selector(NSDocumentController.clearRecentDocuments(_:)), keyEquivalent: "").target = documents
+        recentMenu.delegate = self
         recent.submenu = recentMenu
         file.addItem(recent)
         file.addItem(.separator())

@@ -124,6 +124,16 @@ struct RecentDocumentEntry: Equatable {
     }
 }
 
+extension RecentDocumentEntry {
+    /// Menu titles for the entries: the file name, with the folder added when another entry has the same file name.
+    static func menuTitles(_ entries: [RecentDocumentEntry]) -> [String] {
+        let names = entries.map { $0.url.lastPathComponent }
+        return zip(entries, names).map { entry, name in
+            names.filter { $0 == name }.count > 1 ? "\(name) — \(entry.location)" : name
+        }
+    }
+}
+
 /// First command-line argument that names an existing file, if any (dev and headless runs open that file instead of
 /// reopening the previous session).
 func launchFileArgument(_ arguments: [String], exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> URL? {

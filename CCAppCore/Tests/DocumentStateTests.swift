@@ -103,4 +103,11 @@ final class DocumentStateTests: XCTestCase {
         XCTAssertNil(launchFileArgument(["app", "-psn_0_1"], exists: exists))
         XCTAssertNil(launchFileArgument(["/tmp/a.360"], exists: exists))   // the first element is the executable
     }
+
+    func testRecentMenuTitlesAddTheFolderOnlyForEqualNames() {
+        func e(_ p: String) -> RecentDocumentEntry { RecentDocumentEntry(url: URL(fileURLWithPath: p), home: "/Users/me") }
+        let entries = [e("/Users/me/a/GS01.360"), e("/Users/me/b/GS01.360"), e("/Users/me/a/GS02.360")]
+        XCTAssertEqual(RecentDocumentEntry.menuTitles(entries), ["GS01.360 — ~/a", "GS01.360 — ~/b", "GS02.360"])
+        XCTAssertEqual(RecentDocumentEntry.menuTitles([]), [])
+    }
 }
