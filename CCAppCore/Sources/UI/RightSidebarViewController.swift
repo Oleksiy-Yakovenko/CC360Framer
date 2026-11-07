@@ -368,7 +368,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private var audVolumeRow: SliderField!
     private var audBrowse = NSButton(), audReveal = NSButton()
     private let audNote = NSTextField(wrappingLabelWithString: "")
-    private let probes = AudioProbeCache()
+    private var probes: AudioProbeCache { model.audioProbes }
     private var audioFields: [NSTextField] { [audName, audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
     private var cutForm: NSView!
     private var cardForm: NSView!
@@ -403,7 +403,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         audPath.placeholderString = "Choose an audio file"
         audPath.toolTip = "Full path of the audio file; type or paste a path and press Return, or use Browse…"
         audStart.toolTip = "Start of the clip in seconds of the source video"
-        audEnd.toolTip = "End of the clip in seconds of the source video"
+        audEnd.toolTip = "End of the clip in seconds of the source video. Empty or 0 = follow the length of the audio file"
         audOffset.toolTip = "Where playback starts inside the audio file, in seconds (0 to the file's length)"
         audFadeIn.toolTip = "Fade-in length in seconds; fade in plus fade out cannot exceed the clip length"
         audFadeOut.toolTip = "Fade-out length in seconds; fade in plus fade out cannot exceed the clip length"
@@ -421,7 +421,6 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         audNote.textColor = .systemRed
         audNote.identifier = Kit.fullWidthID
         audNote.isHidden = true
-        probes.onChange = { [weak self] in self?.refresh() }
         audioFileForm = Kit.grid([Kit.row("File", audFile)])
         audioForm = Kit.grid([Kit.row("Label", audName), Kit.row("Start (s)", audStart), Kit.row("End (s)", audEnd), Kit.row("File start (s)", audOffset),
                               Kit.row("Fade in (s)", audFadeIn), Kit.row("Fade out (s)", audFadeOut), Kit.row("Volume (%)", audVolumeRow)])
@@ -526,7 +525,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         if force || audName.currentEditor() == nil { audName.stringValue = c.name }
         audName.placeholderString = (c.path as NSString).lastPathComponent
         if force || audPath.currentEditor() == nil { audPath.stringValue = c.path }
-        show(audStart, c.start); show(audEnd, c.end); show(audOffset, c.fileOffset)
+        show(audStart, c.start); show(audOffset, c.fileOffset)
+        if force || audEnd.currentEditor() == nil { audEnd.stringValue = c.autoEnd ? "" : String(format: "%.2f", c.end) }
+        audEnd.placeholderString = c.autoEnd ? String(format: "%.2f", c.end) : nil
         show(audFadeIn, c.fadeIn); show(audFadeOut, c.fadeOut)
         audVolumeRow.setValue(AudioFileLogic.percent(fromVolume: c.volume))
         let info = probes.info(for: c.path)
@@ -558,7 +559,8 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
                 model.editSelectedAudioClip(name: "Change Audio File") { $0.path = p }
             }
         case audStart, audEnd:
-            model.editSelectedAudioClip(start: num(audStart, c.start), end: num(audEnd, c.end))
+            let e = num(audEnd, c.autoEnd ? 0 : c.end)   // empty, 0 or unparseable text = auto end
+            model.editSelectedAudioClipTimes(start: num(audStart, c.start), end: e > 0 ? e : nil)
         case audOffset:
             let v = AudioFileLogic.clampOffset(num(audOffset, c.fileOffset), fileDuration: probes.info(for: c.path)?.duration)
             model.editSelectedAudioClip(name: "Change Audio File Start") { $0.fileOffset = v }

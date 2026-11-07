@@ -238,6 +238,12 @@ final class PlayerModel: ObservableObject {
     /// Audio clips (external music / voice-over, source time, may overlap), per file in the project sidecar.
     @Published var audioClips: [AudioClip] = [] { didSet { if audioClips != oldValue { audioClipsChanged() } } }
     @Published var selectedAudioClip: UUID?
+    /// Probe results of the clips' audio files (single cache, also used by the Inspector); a new result recomputes the auto ends.
+    private(set) lazy var audioProbes: AudioProbeCache = {
+        let c = AudioProbeCache()
+        c.onChange = { [weak self] in self?.audioProbesChanged() }
+        return c
+    }()
     struct AudioClipSnapshot: Equatable { var clips: [AudioClip]; var selected: UUID? }
     private(set) lazy var audioClipUndo = SnapshotUndo<AudioClipSnapshot>(
         manager: { [unowned self] in undoManager },
@@ -502,6 +508,7 @@ final class PlayerModel: ObservableObject {
             telemetry = Telemetry.load(url: url)
             loadProject(for: url)
             // The clips come from the project (whose load suppresses the change handlers), so the clip player is built now.
+            refreshAutoEnds()   // starts the probes of the clips' files; results update the auto ends
             audioClipsAudioChanged()
             viewState.yaw = viewState.forwardYaw   // the initial view looks along the locked direction (0 without the lock)
             loadPlace(for: url)

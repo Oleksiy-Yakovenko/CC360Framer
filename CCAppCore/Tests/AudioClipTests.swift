@@ -65,6 +65,26 @@ final class AudioClipTests: XCTestCase {
         XCTAssertEqual(e.end, 30); XCTAssertEqual(e.start, 26)
     }
 
+    func testMovingAnAutoClipOnlyMovesItsStartAndCutsTheEndAtTheVideoEnd() {
+        var c = clip(10, 20)
+        c.autoEnd = true
+        let a = AudioClipEdit.move([c], id: c.id, toStart: 15, duration: 30)[0]
+        XCTAssertEqual(a.start, 15); XCTAssertEqual(a.end, 25); XCTAssertTrue(a.autoEnd)
+        // the audio is longer than what is left of the video: the start still goes there, the end stops at the video end
+        let b = AudioClipEdit.move([c], id: c.id, toStart: 25, duration: 30)[0]
+        XCTAssertEqual(b.start, 25); XCTAssertEqual(b.end, 30); XCTAssertTrue(b.autoEnd)
+        let z = AudioClipEdit.move([c], id: c.id, toStart: 99, duration: 30)[0]
+        XCTAssertEqual(z.start, 30 - AudioClipEdit.minLength, accuracy: 1e-9); XCTAssertEqual(z.end, 30)
+        // an explicit clip keeps its length and stops where all of it fits
+        let e = clip(10, 20)
+        XCTAssertEqual(AudioClipEdit.move([e], id: e.id, toStart: 25, duration: 30)[0].start, 20)
+        // moving back restores the full length once the audio length is known again (applyAutoEnds)
+        let back = AudioClipEdit.applyAutoEnds([b], info: { _ in 10 }, videoDuration: 30)[0]
+        XCTAssertEqual(back.end, 30)
+        let moved = AudioClipEdit.applyAutoEnds(AudioClipEdit.move([b], id: b.id, toStart: 12, duration: 30), info: { _ in 10 }, videoDuration: 30)[0]
+        XCTAssertEqual(moved.start, 12); XCTAssertEqual(moved.end, 22)
+    }
+
     func testMoveWholeClipMayOverlapOthers() {
         let a = clip(0, 4), b = clip(10, 14)
         let r = AudioClipEdit.move([a, b], id: b.id, toStart: 2, duration: 30)
@@ -179,5 +199,56 @@ final class AudioClipTests: XCTestCase {
         XCTAssertEqual(TimelineLayout.visibleSpan(minX: -50, maxX: 900, width: 200), 0...200)
         XCTAssertNil(TimelineLayout.visibleSpan(minX: -50, maxX: 10, width: 200))
         XCTAssertNil(TimelineLayout.visibleSpan(minX: 300, maxX: 400, width: 200))
+    }
+
+    // MARK: auto end
+
+    func testAddIsAuto() {
+        XCTAssertTrue(AudioClipEdit.add([], at: 1, duration: 20)!.added.autoEnd)
+    }
+
+    func testAutoEndFollowsFileLength() {
+        var c = clip(2, 5); c.autoEnd = true; c.fileOffset = 1
+        XCTAssertEqual(AudioClipEdit.autoEnd(for: c, fileDuration: 10, videoDuration: 100), 11)   // 2 + (10 - 1)
+        XCTAssertEqual(AudioClipEdit.autoEnd(for: c, fileDuration: 10, videoDuration: 8), 8)      // clamped to the video
+        XCTAssertEqual(AudioClipEdit.autoEnd(for: c, fileDuration: 0.5, videoDuration: 100)!, 2 + AudioClipEdit.minLength, accuracy: 1e-9)
+        c.fileOffset = 20   // offset beyond the file
+        XCTAssertEqual(AudioClipEdit.autoEnd(for: c, fileDuration: 10, videoDuration: 100)!, 2 + AudioClipEdit.minLength, accuracy: 1e-9)
+    }
+
+    func testAutoEndNilWithoutInfoOrWhenExplicit() {
+        var c = clip(2, 5); c.autoEnd = true
+        XCTAssertNil(AudioClipEdit.autoEnd(for: c, fileDuration: nil, videoDuration: 100))
+        XCTAssertNil(AudioClipEdit.autoEnd(for: c, fileDuration: .nan, videoDuration: 100))
+        c.autoEnd = false
+        XCTAssertNil(AudioClipEdit.autoEnd(for: c, fileDuration: 10, videoDuration: 100))
+    }
+
+    func testApplyAutoEnds() {
+        var a = clip(0, 3, fi: 2, fo: 1); a.autoEnd = true
+        let b = clip(10, 13)   // explicit
+        var c = clip(20, 23); c.autoEnd = true   // no info
+        let out = AudioClipEdit.applyAutoEnds([a, b, c], info: { $0.id == c.id ? nil : 1.5 }, videoDuration: 100)
+        XCTAssertEqual(out[0].end, 1.5)
+        XCTAssertEqual(out[0].fadeIn + out[0].fadeOut, 1.5, accuracy: 1e-9)   // fades re-clamped
+        XCTAssertEqual(out[1], b)
+        XCTAssertEqual(out[2], c)
+        XCTAssertEqual(AudioClipEdit.applyAutoEnds(out, info: { $0.id == c.id ? nil : 1.5 }, videoDuration: 100), out)   // idempotent
+    }
+
+    func testResizingEdgeTurnsAutoOff() {
+        var c = clip(2, 8); c.autoEnd = true
+        XCTAssertFalse(AudioClipEdit.moveEdge([c], id: c.id, edge: .end, to: 6, duration: 20)[0].autoEnd)
+        XCTAssertFalse(AudioClipEdit.moveEdge([c], id: c.id, edge: .start, to: 3, duration: 20)[0].autoEnd)
+        XCTAssertTrue(AudioClipEdit.move([c], id: c.id, toStart: 5, duration: 20)[0].autoEnd)
+    }
+
+    func testAutoEndCodable() throws {
+        var c = clip(1, 4); c.autoEnd = true
+        let back = try JSONDecoder().decode(AudioClip.self, from: JSONEncoder().encode(c))
+        XCTAssertTrue(back.autoEnd)
+        let old = try JSONDecoder().decode(AudioClip.self, from: Data(#"{"path":"/a.m4a","start":1,"end":4}"#.utf8))
+        XCTAssertFalse(old.autoEnd)
+        XCTAssertEqual(old.end, 4)
     }
 }

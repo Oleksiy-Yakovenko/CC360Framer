@@ -6,8 +6,42 @@ import Foundation
 extension PlayerModel {
     func audioClipsChanged() {
         guard !loadingProjectFlag else { return }
+        let before = audioClips
+        refreshAutoEnds()
+        if audioClips != before { return }   // the nested change already saved and rebuilt
         saveProject()
         audioClipsAudioChanged()
+    }
+
+    /// Recomputes the ends of the auto clips from the probed file lengths (also starts the probes). Derived values: no
+    /// undo step; if something changed, `audioClips` is set, which saves the project and rebuilds the preview.
+    func refreshAutoEnds() {
+        guard duration > 0, !loadingProjectFlag else { return }
+        let new = AudioClipEdit.applyAutoEnds(audioClips, info: { c in
+            guard let i = audioProbes.info(for: c.path), i.isUsable else { return nil }
+            return i.duration
+        }, videoDuration: duration)
+        if new != audioClips { audioClips = new }
+    }
+
+    func audioProbesChanged() {
+        refreshAutoEnds()
+        objectWillChange.send()   // the Inspector shows the probe result
+    }
+
+    /// Inspector times of the selected clip. `end` nil = auto end (the clip follows its audio file; Start keeps working);
+    /// a value sets the end explicitly. Rejected values leave the clip as it was.
+    func editSelectedAudioClipTimes(start: Double, end: Double?) {
+        guard let id = selectedAudioClip, let c = audioClips.first(where: { $0.id == id }) else { return }
+        let e = end ?? min(duration, start + c.length)
+        guard var new = AudioClipEdit.setRange(audioClips, id: id, start: start, end: e, duration: duration),
+              let i = new.firstIndex(where: { $0.id == id }) else {
+            objectWillChange.send()
+            return
+        }
+        new[i].autoEnd = end == nil
+        guard new != audioClips else { return }
+        audioClipUndo.perform("Edit Audio Clip") { audioClips = new }
     }
 
     /// Called after the clips changed and the project was saved (export reads `audioClips` itself): rebuilds the
@@ -57,7 +91,7 @@ extension PlayerModel {
         endScrub(at: c.start)
     }
 
-    /// Inspector edit of the selected clip's times (rejected values leave it as it was).
+    /// Inspector edit of the selected clip's times, explicit end (rejected values leave it as it was).
     func editSelectedAudioClip(start: Double, end: Double) {
         guard let id = selectedAudioClip else { return }
         guard let new = AudioClipEdit.setRange(audioClips, id: id, start: start, end: end, duration: duration) else {

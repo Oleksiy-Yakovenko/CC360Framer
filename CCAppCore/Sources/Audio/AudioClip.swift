@@ -10,6 +10,9 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
     /// Position on the timeline in seconds of the SOURCE video (like captions and cuts).
     var start: Double
     var end: Double
+    /// Auto end: `end` follows the length of the audio file (`AudioClipEdit.autoEnd`); `end` is still stored (kept in
+    /// sync by the model) so export and batch, which have no probe cache, read the right value. Old sidecars: false.
+    var autoEnd: Bool = false
     /// Where playback starts inside the file, seconds (>= 0).
     var fileOffset: Double
     /// Fade lengths in seconds (>= 0); `fadeIn + fadeOut <= end - start`.
@@ -27,7 +30,8 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
     }
 
     init(id: UUID = UUID(), path: String = "", name: String = "", start: Double, end: Double, fileOffset: Double = 0,
-         fadeIn: Double = 0, fadeOut: Double = 0, volume: Double = 1) {
+         fadeIn: Double = 0, fadeOut: Double = 0, volume: Double = 1, autoEnd: Bool = false) {
+        self.autoEnd = autoEnd
         self.id = id; self.path = path; self.name = name; self.start = start; self.end = end; self.fileOffset = fileOffset
         self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.volume = volume
         AudioClipEdit.normalize(&self)
@@ -41,6 +45,7 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
         name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
         start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end)
+        autoEnd = (try? c.decodeIfPresent(Bool.self, forKey: .autoEnd)) ?? false
         fileOffset = (try? c.decodeIfPresent(Double.self, forKey: .fileOffset)) ?? 0
         fadeIn = (try? c.decodeIfPresent(Double.self, forKey: .fadeIn)) ?? 0
         fadeOut = (try? c.decodeIfPresent(Double.self, forKey: .fadeOut)) ?? 0
@@ -95,6 +100,7 @@ enum AudioClipEdit {
         let end = min(start + length, duration)
         guard end - start >= minLength - 1e-9 else { return nil }
         var c = make(start, end)
+        c.autoEnd = true
         normalize(&c)
         return (sorted(clips + [c]), c)
     }
@@ -123,6 +129,7 @@ enum AudioClipEdit {
         case .end:
             out[i].end = min(duration, max(time, c.start + minLength))
         }
+        out[i].autoEnd = false   // resizing writes explicit times
         normalize(&out[i])
         return out   // order is by start; not re-sorted while dragging so the dragged clip keeps its identity in the UI
     }
@@ -134,6 +141,15 @@ enum AudioClipEdit {
         var out = clips
         let c = clips[i]
         let length = c.end - c.start
+        if c.autoEnd {
+            // The end follows the audio (the model recomputes it from the file length), so only the start moves: it may go as
+            // far as the video allows and the end is cut off at the end of the video.
+            let s = max(0, min(start, duration - minLength))
+            out[i].start = s
+            out[i].end = min(duration, s + length)
+            normalize(&out[i])
+            return out
+        }
         guard length <= duration else { return clips }
         let s = max(0, min(start, duration - length))
         out[i].start = s
@@ -161,6 +177,25 @@ enum AudioClipEdit {
         var out = clips
         out[i].volume = max(0, min(1, volume))
         return out
+    }
+
+    /// End of an auto clip: start + (file duration - fileOffset), at least `minLength` long, clamped to the video.
+    /// nil when the clip is not auto or the file duration is unknown (then the stored end stays).
+    static func autoEnd(for c: AudioClip, fileDuration: Double?, videoDuration: Double) -> Double? {
+        guard c.autoEnd, let d = fileDuration, d.isFinite, videoDuration.isFinite, videoDuration > 0 else { return nil }
+        let len = max(minLength, d - c.fileOffset)
+        return min(videoDuration, c.start + len)
+    }
+
+    /// Recomputes `end` of every auto clip whose file duration is known (`info`); everything else is untouched.
+    static func applyAutoEnds(_ clips: [AudioClip], info: (AudioClip) -> Double?, videoDuration: Double) -> [AudioClip] {
+        clips.map { c in
+            guard let e = autoEnd(for: c, fileDuration: info(c), videoDuration: videoDuration), e != c.end else { return c }
+            var n = c
+            n.end = e
+            normalize(&n)
+            return n
+        }
     }
 
     /// Stable order by start (equal starts keep their order, so later-added clips stay later).
