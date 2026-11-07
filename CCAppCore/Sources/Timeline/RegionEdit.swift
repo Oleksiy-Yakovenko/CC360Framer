@@ -89,8 +89,9 @@ enum TimelineKind: String, CaseIterable {
     case cuts = "Cuts"
     case locationCards = "Location cards"
     case captions = "Captions"
+    case audio = "Audio"
 
-    var isRegion: Bool { self == .cuts || self == .captions }
+    var isRegion: Bool { self == .cuts || self == .captions || self == .audio }
 }
 
 /// Seekbar geometry and hit testing, separate from drawing so it can be tested.
@@ -121,8 +122,12 @@ struct TimelineLayout {
         }
         if let sel = regions.first(where: { $0.id == selected }), let h = edge(sel) { return h }
         let edges = regions.compactMap { r in edge(r).map { (r, $0) } }
-        if let best = edges.min(by: { distance($0.0, $0.1, px) < distance($1.0, $1.1, px) }) { return best.1 }
-        if let r = regions.first(where: { px >= x($0.start) && px <= x($0.end ?? $0.start) }) { return .region(r.id) }
+        // Ties (overlapping regions with the same edge) go to the later one.
+        if let best = edges.reversed().min(by: { distance($0.0, $0.1, px) < distance($1.0, $1.1, px) }) { return best.1 }
+        // Overlapping regions (audio clips): the selected one wins, else the latest in the list (drawn on top).
+        func contains(_ r: TimelineItem) -> Bool { px >= x(r.start) && px <= x(r.end ?? r.start) }
+        if let sel = regions.first(where: { $0.id == selected }), contains(sel) { return .region(sel.id) }
+        if let r = regions.last(where: contains) { return .region(r.id) }
         let points = items.filter { !$0.isRegion }
         if let p = points.min(by: { abs(x($0.start) - px) < abs(x($1.start) - px) }), abs(x(p.start) - px) <= 8 { return .point(p.id) }
         return nil

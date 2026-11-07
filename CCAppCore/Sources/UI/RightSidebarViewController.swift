@@ -429,21 +429,24 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         let cut = kind == .cuts ? model.selectedCutRegion : nil
         let card = kind == .locationCards ? model.selectedCardKeyValue : nil
         let caption = kind == .captions ? model.selectedCaptionValue : nil
-        heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : kind == .captions ? "Caption" : "Keyframe"
+        let audioClip = kind == .audio ? model.selectedAudioClipValue : nil   // no form yet: only the heading
+        heading.stringValue = kind == .cuts ? "Cut" : kind == .locationCards ? "Location card" : kind == .captions ? "Caption"
+            : kind == .audio ? "Audio clip" : "Keyframe"
         switch kind {
+        case .audio: empty.stringValue = "Select an audio clip (click its bar under the seekbar) to edit it here."
         case .cuts: empty.stringValue = "Select a cut (click its bar under the seekbar) to edit it here."
         case .captions: empty.stringValue = "Select a caption (click its bar under the seekbar) to edit it here."
         case .locationCards: empty.stringValue = "Select a location card (click its diamond under the seekbar) to edit it here."
         default: empty.stringValue = "Select a keyframe (click a diamond under the seekbar) to edit it here."
         }
-        empty.isHidden = key != nil || cut != nil || card != nil || caption != nil
+        empty.isHidden = key != nil || cut != nil || card != nil || caption != nil || audioClip != nil
         keyForm.isHidden = key == nil
         cutForm.isHidden = cut == nil
         cardForm.isHidden = card == nil
         captionForm.isHidden = caption == nil
         // A different item than the one last shown: discard any edit in progress (abortEditing does not
         // fire the action, so the old text is never written into the new item), then show its values.
-        let selectedID: UUID? = key?.id ?? cut?.id ?? card?.id ?? caption?.id
+        let selectedID: UUID? = key?.id ?? cut?.id ?? card?.id ?? caption?.id ?? audioClip?.id
         if InspectorFocus.shouldResetFields(shown: shownItemID, selected: selectedID) {
             for f in fields { f.abortEditing() }
             if caption != nil, capTextView.window?.firstResponder === capTextView { capTextView.string = caption?.text ?? "" }

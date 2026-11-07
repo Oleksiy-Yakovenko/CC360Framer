@@ -33,9 +33,23 @@ final class TimelineMarkersView: NSView {
         NSColor.black.setFill()
         bounds.fill()
         let l = layoutInfo
-        for item in items {
+        let overlapping = adapter?.kind == .audio   // clips may overlap: translucent bars with an outline, selected one on top
+        for item in items.sorted(by: { ($0.id == selected ? 1 : 0) < ($1.id == selected ? 1 : 0) }) {
             let isSel = item.id == selected
-            if let end = item.end {
+            if let end = item.end, overlapping {
+                let r = NSRect(x: l.x(item.start), y: 4, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 8)
+                let base = isSel ? NSColor.controlAccentColor : NSColor.systemTeal
+                base.withAlphaComponent(isSel ? 0.6 : 0.35).setFill()
+                let path = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
+                path.fill()
+                base.withAlphaComponent(0.95).setStroke()
+                path.lineWidth = 1
+                path.stroke()
+                if isSel {
+                    NSColor.white.setFill()
+                    for x in [r.minX, r.maxX - 3] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY + 2, width: 3, height: r.height - 4), xRadius: 1, yRadius: 1).fill() }
+                }
+            } else if let end = item.end {
                 let r = NSRect(x: l.x(item.start), y: 4, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 8)
                 (isSel ? NSColor.controlAccentColor : NSColor.systemRed).withAlphaComponent(isSel ? 0.9 : 0.7).setFill()
                 NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2).fill()

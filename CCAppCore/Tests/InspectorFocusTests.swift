@@ -17,3 +17,11 @@ final class InspectorFocusTests: XCTestCase {
         XCTAssertFalse(InspectorFocus.shouldResetFields(shown: UUID?.none, selected: nil))
     }
 }
+
+final class InspectorFocusAudioClipTests: XCTestCase {
+    func testSwitchingAudioClipResets() {
+        let a = AudioClip(start: 0, end: 3), b = AudioClip(start: 1, end: 4)
+        XCTAssertTrue(InspectorFocus.shouldResetFields(shown: a.id, selected: b.id))
+        XCTAssertFalse(InspectorFocus.shouldResetFields(shown: a.id, selected: a.id))
+    }
+}

@@ -13,7 +13,7 @@ final class TimelineBarViewController: ModelViewController {
 
     override func loadView() {
         view = NSView()
-        popup = Kit.popup(TimelineKind.allCases.map(\.rawValue), tip: "Timeline to edit: keyframes (camera), cuts (removed parts), location cards, ...", target: self, action: #selector(kindChosen))
+        popup = Kit.popup(TimelineKind.allCases.map(\.rawValue), tip: "Timeline to edit: keyframes (camera), cuts (removed parts), location cards, captions, audio clips", target: self, action: #selector(kindChosen))
         previousButton = Kit.symbolButton("backward.end.fill", tip: "Previous item", target: self, action: #selector(previous))
         nextButton = Kit.symbolButton("forward.end.fill", tip: "Next item", target: self, action: #selector(next))
         addButton = Kit.button("Add", target: self, action: #selector(add))

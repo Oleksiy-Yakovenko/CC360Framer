@@ -235,6 +235,20 @@ final class PlayerModel: ObservableObject {
     var lastCaptionStyleEdit: (name: String, at: Date)?
     let captionImages = CaptionImageCache()
 
+    /// Audio clips (external music / voice-over, source time, may overlap), per file in the project sidecar.
+    @Published var audioClips: [AudioClip] = [] { didSet { if audioClips != oldValue { audioClipsChanged() } } }
+    @Published var selectedAudioClip: UUID?
+    struct AudioClipSnapshot: Equatable { var clips: [AudioClip]; var selected: UUID? }
+    private(set) lazy var audioClipUndo = SnapshotUndo<AudioClipSnapshot>(
+        manager: { [unowned self] in undoManager },
+        capture: { [unowned self] in AudioClipSnapshot(clips: audioClips, selected: selectedAudioClip) },
+        restore: { [unowned self] s in
+            audioClips = s.clips
+            selectedAudioClip = s.selected
+        })
+    var audioClipDragStart: AudioClipSnapshot?
+    var lastAudioClipEdit: (name: String, at: Date)?
+
     /// Look of the location card; per file, saved in the project sidecar.
     @Published private(set) var cardStyle = LocationCardStyle()
     private var loadingProject = false
@@ -329,6 +343,8 @@ final class PlayerModel: ObservableObject {
         autoLocationCard = proj.autoLocationCard ?? true
         captions = proj.captions ?? []
         selectedCaption = nil
+        audioClips = proj.audioClips ?? []
+        selectedAudioClip = nil
         captionStyle = proj.captionStyle ?? CaptionStyle.loadDefaults()
         directionLock = proj.directionLock ?? false
         lockedYaw = proj.lockedYaw ?? 0
@@ -348,6 +364,7 @@ final class PlayerModel: ObservableObject {
                        locationCards: cardKeys.isEmpty ? nil : cardKeys, autoLocationCard: autoLocationCard ? nil : false,
                        showLocationCard: cardOptions.show ? nil : false, locationFields: cardOptions.fields == LocationCardFields() ? nil : cardOptions.fields,
                        captions: captions.isEmpty ? nil : captions, captionStyle: captionStyle,
+                       audioClips: audioClips.isEmpty ? nil : audioClips,
                        directionLock: directionLock ? true : nil, lockedYaw: lockedYaw == 0 ? nil : lockedYaw).save(for: sourceURL)
     }
 

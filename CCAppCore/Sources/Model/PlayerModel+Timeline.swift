@@ -85,6 +85,7 @@ extension PlayerModel {
         case .cuts: return CutTimeline(model: self)
         case .locationCards: return LocationCardTimeline(model: self)
         case .captions: return CaptionTimeline(model: self)
+        case .audio: return AudioClipTimeline(model: self)
         }
     }
 

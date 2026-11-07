@@ -1,7 +1,7 @@
 import Foundation
 
 /// Decides whether the Inspector forms must drop an in-progress text edit because a different
-/// item (keyframe, cut, card, caption) is now selected than the one the fields last showed.
+/// item (keyframe, cut, card, caption, audio clip) is now selected than the one the fields last showed.
 enum InspectorFocus {
     /// `shown`: identity the form last displayed (nil = nothing); `selected`: identity now selected (nil = nothing).
     /// True only when an item is selected and it differs from the one shown, so typing in the
