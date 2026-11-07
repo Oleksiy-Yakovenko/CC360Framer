@@ -24,7 +24,10 @@ final class TimelineMarkersView: NSView {
 
     override var isFlipped: Bool { true }
     /// Height of the strip above the seekbar.
-    static let height: CGFloat = 32
+    static let height: CGFloat = 64
+    /// Vertical band of the region bars (top and bottom margin), leaving room around them in the tall strip.
+    private static let bandInset: CGFloat = 12
+    private static let handleWidth: CGFloat = 4
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height) }
 
     private var layoutInfo: TimelineLayout { TimelineLayout(width: bounds.width, duration: duration) }
@@ -37,7 +40,7 @@ final class TimelineMarkersView: NSView {
         for item in items.sorted(by: { ($0.id == selected ? 1 : 0) < ($1.id == selected ? 1 : 0) }) {
             let isSel = item.id == selected
             if let end = item.end, overlapping {
-                let r = NSRect(x: l.x(item.start), y: 4, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 8)
+                let r = NSRect(x: l.x(item.start), y: Self.bandInset, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - Self.bandInset * 2)
                 let base = isSel ? NSColor.controlAccentColor : NSColor.systemTeal
                 base.withAlphaComponent(isSel ? 0.6 : 0.35).setFill()
                 let path = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
@@ -47,18 +50,18 @@ final class TimelineMarkersView: NSView {
                 path.stroke()
                 if isSel {
                     NSColor.white.setFill()
-                    for x in [r.minX, r.maxX - 3] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY + 2, width: 3, height: r.height - 4), xRadius: 1, yRadius: 1).fill() }
+                    for x in [r.minX, r.maxX - Self.handleWidth] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY, width: Self.handleWidth, height: r.height), xRadius: 1.5, yRadius: 1.5).fill() }
                 }
             } else if let end = item.end {
-                let r = NSRect(x: l.x(item.start), y: 4, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - 8)
+                let r = NSRect(x: l.x(item.start), y: Self.bandInset, width: max(l.x(end) - l.x(item.start), 2), height: bounds.height - Self.bandInset * 2)
                 (isSel ? NSColor.controlAccentColor : NSColor.systemRed).withAlphaComponent(isSel ? 0.9 : 0.7).setFill()
                 NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2).fill()
                 if isSel {   // grab handles
                     NSColor.white.setFill()
-                    for x in [r.minX, r.maxX - 3] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY + 2, width: 3, height: r.height - 4), xRadius: 1, yRadius: 1).fill() }
+                    for x in [r.minX, r.maxX - Self.handleWidth] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY, width: Self.handleWidth, height: r.height), xRadius: 1.5, yRadius: 1.5).fill() }
                 }
             } else {
-                let rad: CGFloat = isSel ? 5 : 3.5
+                let rad: CGFloat = isSel ? 8 : 6
                 let c = CGPoint(x: l.x(item.start), y: bounds.midY)
                 let path = NSBezierPath()
                 path.move(to: CGPoint(x: c.x, y: c.y - rad))
