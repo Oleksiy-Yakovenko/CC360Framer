@@ -173,7 +173,7 @@ final class TimelineMarkersView: NSView {
             // A click only selects (no seek: the window stays where it is); dragging the body moves the region.
             adapter.selectQuietly(id)
             if let item = items.first(where: { $0.id == id }) {
-                bodyDrag = (id, layoutInfo.time(p.x) - item.start, p.x, false)
+                bodyDrag = (id, layoutInfo.time(p.x) - item.start, Double(p.x), false)
             }
         case .regionStart(let id): startDrag(adapter, id, .start)
         case .regionEnd(let id): startDrag(adapter, id, .end)
