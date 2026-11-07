@@ -426,6 +426,14 @@ final class PlayerModel: ObservableObject {
     /// Player the `timeObserver` and `cutObserver` were added to.
     private var observedPlayer: AVPlayer?
     var scrubbing = false
+    /// Preview of the audio clips: a second player slaved to the main player's source time.
+    lazy var clipPlayback: AudioClipPlayback = {
+        let c = AudioClipPlayback()
+        c.mainTime = { [weak self] in self?.player.currentTime().seconds ?? 0 }
+        c.mainPlaying = { [weak self] in self?.isPlaying ?? false }
+        c.mainScrubbing = { [weak self] in self?.scrubbing ?? false }
+        return c
+    }()
     let dissolve = DissolveState()
     private(set) var session: MediaSession?
 
@@ -434,6 +442,7 @@ final class PlayerModel: ObservableObject {
             errorText = nil
             player.pause()
             isPlaying = false
+            clipPlayback.stop()
             dissolve.release(frames: frames)
             let session = try await MediaSession.open(url)
             let comp = session.composition
@@ -465,6 +474,7 @@ final class PlayerModel: ObservableObject {
             self.position = 0
             self.title = url.lastPathComponent
             installObservers(item)
+            audioClipsAudioChanged()
             cancelRecording()
             isRecording = false
             viewState.reset()
@@ -542,6 +552,7 @@ final class PlayerModel: ObservableObject {
     }
 
     func cleanup() {
+        clipPlayback.stop()
         dissolve.release(frames: frames)
         session?.cleanup()
     }
@@ -566,7 +577,7 @@ final class PlayerModel: ObservableObject {
             }
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.isPlaying = false }
+            MainActor.assumeIsolated { self?.isPlaying = false; self?.clipPlayback.pause() }
         }
     }
 
@@ -593,10 +604,13 @@ final class PlayerModel: ObservableObject {
         if isPlaying {
             player.pause()
             isPlaying = false
+            clipPlayback.pause()
         } else {
-            if position >= duration - 0.05 { player.seek(to: .zero); position = 0 }
+            var from: Double?
+            if position >= duration - 0.05 { player.seek(to: .zero); position = 0; from = 0 }
             player.play()
             isPlaying = true
+            clipPlayback.play(at: from)
             skipCutIfNeeded()   // starting inside a cut with "Preview with cuts applied"
 
         }
@@ -606,11 +620,13 @@ final class PlayerModel: ObservableObject {
 
     func scrub(to seconds: Double) {
         position = seconds
+        clipPlayback.scrub(to: seconds)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
                     toleranceBefore: CMTime(seconds: 0.2, preferredTimescale: 600), toleranceAfter: CMTime(seconds: 0.2, preferredTimescale: 600))
     }
 
     func endScrub(at seconds: Double) {
+        clipPlayback.seek(to: seconds)   // resumes when the main player plays (the flag is cleared in the seek callback below)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in self?.scrubbing = false }
         }

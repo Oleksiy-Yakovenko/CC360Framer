@@ -10,9 +10,12 @@ extension PlayerModel {
         audioClipsAudioChanged()
     }
 
-    /// Hook for the audio mixing (playback and export): called after the clips changed and the project was saved.
-    /// Empty until the mixing is implemented.
-    func audioClipsAudioChanged() {}
+    /// Called after the clips changed and the project was saved (export reads `audioClips` itself): rebuilds the
+    /// preview item of the clip player (`AudioClipPlayback`: debounced, built off the main thread, keeps the position
+    /// and play state).
+    func audioClipsAudioChanged() {
+        clipPlayback.setClips(audioClips, duration: duration)
+    }
 
     var selectedAudioClipValue: AudioClip? { selectedAudioClip.flatMap { id in audioClips.first { $0.id == id } } }
 

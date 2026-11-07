@@ -209,6 +209,7 @@ extension PlayerModel {
         if target >= duration - 0.02 {
             player.pause()
             isPlaying = false
+            clipPlayback.pause()
             scrub(to: duration); endScrub(at: duration)
         } else {
             scrub(to: target); endScrub(at: target)
