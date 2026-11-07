@@ -340,7 +340,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let timeField = NSTextField(), yawField = NSTextField(), pitchField = NSTextField(), fovField = NSTextField()
     private let cutStartField = NSTextField(), cutEndField = NSTextField()
-    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth, audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
+    private var fields: [NSTextField] { [timeField, yawField, pitchField, fovField, cutStartField, cutEndField, cardTimeField, capStartField, capEndField, ovSize, ovStrokeWidth, audName, audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
     private let cardTimeField = NSTextField()
     private var cardPlacementPopup = NSPopUpButton()
     private var cardOverrideCheck = NSButton()
@@ -355,14 +355,14 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
     private var keyForm: NSView!
     private var audioFileForm: NSView!
     private var audioForm: NSView!
-    private let audPath = NSTextField(), audStart = NSTextField(), audEnd = NSTextField(), audOffset = NSTextField()
+    private let audName = NSTextField(), audPath = NSTextField(), audStart = NSTextField(), audEnd = NSTextField(), audOffset = NSTextField()
     private let audFadeIn = NSTextField(), audFadeOut = NSTextField()
     private let audVolume = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
     private var audVolumeRow: SliderField!
     private var audBrowse = NSButton(), audReveal = NSButton()
     private let audNote = NSTextField(wrappingLabelWithString: "")
     private let probes = AudioProbeCache()
-    private var audioFields: [NSTextField] { [audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
+    private var audioFields: [NSTextField] { [audName, audPath, audStart, audEnd, audOffset, audFadeIn, audFadeOut] }
     private var cutForm: NSView!
     private var cardForm: NSView!
     private var captionForm: NSView!
@@ -388,6 +388,8 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         cardOverrideCheck = NSButton(checkboxWithTitle: "Override placement", target: self, action: #selector(cardOverrideToggled))
         cardOverrideCheck.toolTip = "Off: this card uses the placement chosen in the Location tab. On: it has its own placement."
         for f in audioFields { f.action = #selector(audioFieldCommitted(_:)) }
+        audName.cell?.usesSingleLineMode = true
+        audName.toolTip = "Label shown on the clip in the timeline; leave empty to show the audio file's name"
         audPath.alignment = .left
         audPath.lineBreakMode = .byTruncatingMiddle
         audPath.cell?.usesSingleLineMode = true
@@ -414,7 +416,7 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         audNote.isHidden = true
         probes.onChange = { [weak self] in self?.refresh() }
         audioFileForm = Kit.grid([Kit.row("File", audFile)])
-        audioForm = Kit.grid([Kit.row("Start (s)", audStart), Kit.row("End (s)", audEnd), Kit.row("File start (s)", audOffset),
+        audioForm = Kit.grid([Kit.row("Label", audName), Kit.row("Start (s)", audStart), Kit.row("End (s)", audEnd), Kit.row("File start (s)", audOffset),
                               Kit.row("Fade in (s)", audFadeIn), Kit.row("Fade out (s)", audFadeOut), Kit.row("Volume (%)", audVolumeRow)])
         keyForm = Kit.grid([Kit.row("Time (s)", timeField), Kit.row("Yaw (°)", yawField),
                             Kit.row("Pitch (°)", pitchField), Kit.row("FOV (°)", fovField)])
@@ -514,6 +516,8 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
 
     private func showAudio(_ c: AudioClip, force: Bool) {
         func show(_ f: NSTextField, _ x: Double) { if force || f.currentEditor() == nil { f.stringValue = String(format: "%.2f", x) } }
+        if force || audName.currentEditor() == nil { audName.stringValue = c.name }
+        audName.placeholderString = (c.path as NSString).lastPathComponent
         if force || audPath.currentEditor() == nil { audPath.stringValue = c.path }
         show(audStart, c.start); show(audEnd, c.end); show(audOffset, c.fileOffset)
         show(audFadeIn, c.fadeIn); show(audFadeOut, c.fadeOut)
@@ -537,6 +541,9 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         guard let c = model.selectedAudioClipValue else { return }
         let num = { (g: NSTextField, old: Double) in self.parse(g, old) }
         switch f {
+        case audName:
+            let n = audName.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if n != c.name { model.editSelectedAudioClip(name: "Change Audio Label") { $0.name = n } }
         case audPath:
             let p = (audPath.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
             if p != c.path {

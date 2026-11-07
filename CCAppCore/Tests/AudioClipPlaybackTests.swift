@@ -82,6 +82,8 @@ final class AudioClipPlaybackTests: XCTestCase {
             var c = a; change(&c)
             XCTAssertTrue(AudioClipSync.needsRebuild(old: [a], new: [c]))
         }
+        var named = a; named.name = "Song"
+        XCTAssertFalse(AudioClipSync.needsRebuild(old: [a], new: [named]))
         XCTAssertTrue(AudioClipSync.needsRebuild(old: [a], new: [a, b]))
         var other = a; other.id = UUID()
         XCTAssertTrue(AudioClipSync.needsRebuild(old: [a], new: [other]))

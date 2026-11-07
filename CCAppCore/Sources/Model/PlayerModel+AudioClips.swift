@@ -116,7 +116,7 @@ extension PlayerModel {
 struct AudioClipTimeline: TimelineAdapter {
     let model: PlayerModel
     var kind: TimelineKind { .audio }
-    var items: [TimelineItem] { model.audioClips.map { TimelineItem(id: $0.id, start: $0.start, end: $0.end) } }
+    var items: [TimelineItem] { model.audioClips.map { TimelineItem(id: $0.id, start: $0.start, end: $0.end, label: $0.displayName) } }
     var selected: UUID? { model.selectedAudioClip }
     var addTitle: String { "Add audio" }
     var deleteTitle: String { "Delete audio" }

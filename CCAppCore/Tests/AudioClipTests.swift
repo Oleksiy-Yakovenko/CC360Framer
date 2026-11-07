@@ -158,4 +158,26 @@ final class AudioClipTests: XCTestCase {
         let same = TimelineItem(id: UUID(), start: 10, end: 40)
         XCTAssertEqual(l.hit([a, same], selected: nil, at: l.x(10)), .regionStart(same.id))   // tie: later
     }
+
+    func testDisplayName() {
+        XCTAssertEqual(AudioClip(path: "/m/Song.mp3", name: "  Intro \n", start: 0, end: 5).displayName, "Intro")
+        XCTAssertEqual(AudioClip(path: "/m/Song.mp3", name: "   ", start: 0, end: 5).displayName, "Song.mp3")
+        XCTAssertEqual(AudioClip(path: "", start: 0, end: 5).displayName, "")
+    }
+
+    func testNameCodable() throws {
+        let c = AudioClip(path: "/a.wav", name: "Voice", start: 1, end: 4)
+        let back = try JSONDecoder().decode(AudioClip.self, from: JSONEncoder().encode(c))
+        XCTAssertEqual(back.name, "Voice")
+        let old = try JSONDecoder().decode(AudioClip.self, from: Data(#"{"path":"/a.wav","start":1,"end":4}"#.utf8))
+        XCTAssertEqual(old.name, "")
+    }
+
+    func testVisibleSpan() {
+        XCTAssertEqual(TimelineLayout.visibleSpan(minX: 10, maxX: 100, width: 200), 10...100)
+        XCTAssertEqual(TimelineLayout.visibleSpan(minX: -500, maxX: 100, width: 200), 0...100)
+        XCTAssertEqual(TimelineLayout.visibleSpan(minX: -50, maxX: 900, width: 200), 0...200)
+        XCTAssertNil(TimelineLayout.visibleSpan(minX: -50, maxX: 10, width: 200))
+        XCTAssertNil(TimelineLayout.visibleSpan(minX: 300, maxX: 400, width: 200))
+    }
 }

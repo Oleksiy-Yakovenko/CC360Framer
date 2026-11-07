@@ -76,6 +76,7 @@ final class TimelineMarkersView: NSView {
                 base.withAlphaComponent(0.95).setStroke()
                 path.lineWidth = 1
                 path.stroke()
+                drawLabel(item.label, bar: r)
                 if isSel {
                     NSColor.white.setFill()
                     for x in [r.minX, r.maxX - Self.handleWidth] { NSBezierPath(roundedRect: NSRect(x: x, y: r.minY, width: Self.handleWidth, height: r.height), xRadius: 1.5, yRadius: 1.5).fill() }
@@ -102,6 +103,23 @@ final class TimelineMarkersView: NSView {
             }
         }
         drawPlayhead(l)
+    }
+
+    private static let labelStyle: NSParagraphStyle = {
+        let s = NSMutableParagraphStyle()
+        s.lineBreakMode = .byTruncatingTail
+        s.alignment = .center
+        return s
+    }()
+    private static let labelAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor(white: 1, alpha: 0.92), .paragraphStyle: labelStyle]
+
+    /// Clip name centred on the visible part of the bar, cut with an ellipsis at the end when it does not fit.
+    private func drawLabel(_ text: String, bar: NSRect) {
+        guard !text.isEmpty, let span = TimelineLayout.visibleSpan(minX: bar.minX + 5, maxX: bar.maxX - 5, width: bounds.width) else { return }
+        let h = ceil(NSFont.systemFont(ofSize: 11).boundingRectForFont.height)
+        let rect = NSRect(x: span.lowerBound, y: bar.midY - h / 2, width: span.upperBound - span.lowerBound, height: h)
+        (text as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: Self.labelAttrs)
     }
 
     /// Dark grey ticks along the bottom, one per step (1 s, thinned when zoomed out), aligned to multiples of the step.

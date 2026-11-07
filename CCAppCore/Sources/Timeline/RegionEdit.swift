@@ -96,6 +96,8 @@ struct TimelineItem: Equatable, Identifiable {
     var id: UUID
     var start: Double
     var end: Double?
+    /// Text drawn on the bar (audio clips); empty = none.
+    var label = ""
     var isRegion: Bool { end != nil }
 }
 
@@ -223,6 +225,13 @@ struct TimelineLayout {
         case region(UUID)
         case regionStart(UUID)
         case regionEnd(UUID)
+    }
+
+    /// The part of the bar `minX...maxX` inside the strip `0...width`, or nil when it is narrower than `minWidth`
+    /// (labels are centred on it).
+    static func visibleSpan(minX: Double, maxX: Double, width: Double, minWidth: Double = 20) -> ClosedRange<Double>? {
+        let a = max(minX, 0), b = min(maxX, width)
+        return b - a >= minWidth ? a...b : nil
     }
 
     var pixelsPerSecond: Double { max(width, 1) / visible }

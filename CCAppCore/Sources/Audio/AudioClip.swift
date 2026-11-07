@@ -5,6 +5,8 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
     var id = UUID()
     /// Absolute path of the audio file; empty = not chosen yet.
     var path: String
+    /// Optional user-given name shown on the timeline; empty = the file name (`displayName`). Does not affect the audio.
+    var name: String = ""
     /// Position on the timeline in seconds of the SOURCE video (like captions and cuts).
     var start: Double
     var end: Double
@@ -18,9 +20,15 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
 
     var length: Double { end - start }
 
-    init(id: UUID = UUID(), path: String = "", start: Double, end: Double, fileOffset: Double = 0,
+    /// What the timeline shows: the trimmed name, else the file name of `path`, else "".
+    var displayName: String {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? (path as NSString).lastPathComponent : n
+    }
+
+    init(id: UUID = UUID(), path: String = "", name: String = "", start: Double, end: Double, fileOffset: Double = 0,
          fadeIn: Double = 0, fadeOut: Double = 0, volume: Double = 1) {
-        self.id = id; self.path = path; self.start = start; self.end = end; self.fileOffset = fileOffset
+        self.id = id; self.path = path; self.name = name; self.start = start; self.end = end; self.fileOffset = fileOffset
         self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.volume = volume
         AudioClipEdit.normalize(&self)
     }
@@ -30,6 +38,7 @@ struct AudioClip: Codable, Equatable, Identifiable, TimeRegion {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         path = (try? c.decodeIfPresent(String.self, forKey: .path)) ?? ""
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
         start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end)
         fileOffset = (try? c.decodeIfPresent(Double.self, forKey: .fileOffset)) ?? 0
