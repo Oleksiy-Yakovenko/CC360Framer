@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
+        documents.logPersistedState()
         documents.onDocumentAdded = { [weak self] in self?.welcomeWindow?.close() }
         // Before AppKit decides whether anything was opened (and the untitled-file hook below runs).
         if let launchFile {

@@ -2,11 +2,21 @@ import XCTest
 @testable import CCAppCore
 
 final class DocumentStateTests: XCTestCase {
+    private var suiteNames: [String] = []
+
     private func makeDefaults() -> UserDefaults {
         let name = "CC360FramerTests." + UUID().uuidString
+        suiteNames.append(name)
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
         return d
+    }
+
+    /// The test suites would otherwise stay behind as preference files.
+    override func tearDown() {
+        for name in suiteNames { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
+        suiteNames = []
+        super.tearDown()
     }
 
     func testFrameNameIsPerFile() {
