@@ -8,12 +8,15 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
 
     private var containerPopup = NSPopUpButton(), codecPopup = NSPopUpButton(), ratePopup = NSPopUpButton()
     private var resolutionPopup = NSPopUpButton(), aspectPopup = NSPopUpButton()
-    private let bitrateField = NSTextField(), qualitySlider = NSSlider(value: 0.7, minValue: 0.1, maxValue: 1, target: nil, action: nil)
+    private let bitrateSlider = NSSlider(value: 20, minValue: ExportSettings.bitrateRange.lowerBound, maxValue: ExportSettings.bitrateRange.upperBound, target: nil, action: nil)
+    private let bitrateValue = NSTextField(labelWithString: "")
+    private let bitrateAuto = NSButton(checkboxWithTitle: "Auto", target: nil, action: nil)
+    private let qualitySlider = NSSlider(value: 0.7, minValue: 0.1, maxValue: 1, target: nil, action: nil)
     private let widthField = NSTextField(), aspectW = NSTextField(), aspectH = NSTextField()
     private let crossfadeField = NSTextField()
     private let sizeLabel = NSTextField(labelWithString: "")
     private var qualityField: SliderField!
-    private var bitrateRow: GridRow!, qualityRow: GridRow!, widthRow: GridRow!, aspectRow: GridRow!
+    private var bitrateRow: GridRow!, bitrateAutoRow: GridRow!, qualityRow: GridRow!, widthRow: GridRow!, aspectRow: GridRow!
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -30,27 +33,35 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         qualitySlider.toolTip = "Encoder quality, 0.1 (small) to 1 (best)"
         qualityField = Kit.sliderRow(qualitySlider, decimals: 2, step: 0.01, target: self, action: #selector(changed))
         qualityField.toolTip = qualitySlider.toolTip
-        bitrateField.placeholderString = "auto"
-        bitrateField.toolTip = "Average video bitrate in Mbps; empty = automatic (20 Mbps, 50 Mbps above 3 MP)"
+        bitrateSlider.toolTip = "Average video bitrate in Mbps (1 to 100)"
+        bitrateSlider.numberOfTickMarks = 0
+        bitrateSlider.target = self; bitrateSlider.action = #selector(changed)
+        bitrateSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        bitrateAuto.toolTip = "Automatic bitrate: 20 Mbps up to about 3 MP, 50 Mbps above. The slider then shows the value for the current output size"
+        bitrateAuto.target = self; bitrateAuto.action = #selector(changed)
+        bitrateValue.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        bitrateValue.alignment = .right
+        bitrateValue.toolTip = "Chosen average bitrate"
+        bitrateValue.setContentHuggingPriority(.required, for: .horizontal)
+        bitrateValue.widthAnchor.constraint(equalToConstant: 64).isActive = true
         widthField.toolTip = "Output width in pixels (16 to 8192)"
         aspectW.toolTip = "Aspect width"; aspectH.toolTip = "Aspect height"
         crossfadeField.toolTip = "Length of the dissolve at cuts in seconds (0 = hard cut)"
-        for f in [bitrateField, widthField, aspectW, aspectH, crossfadeField] {
+        for f in [widthField, aspectW, aspectH, crossfadeField] {
             f.alignment = .right; f.delegate = self; f.target = self; f.action = #selector(changed)
         }
         sizeLabel.textColor = .secondaryLabelColor
         sizeLabel.toolTip = "Resulting output size in pixels"
-        let mbps = NSStackView(views: [bitrateField, NSTextField(labelWithString: "Mbps")])
-        mbps.spacing = 4
+        let mbps = NSStackView(views: [bitrateSlider, bitrateValue])
+        mbps.spacing = 6
         mbps.distribution = .fill
-        bitrateField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        mbps.views.last?.setContentHuggingPriority(.required, for: .horizontal)
         let aspectBox = NSStackView(views: [aspectW, NSTextField(labelWithString: ":"), aspectH])
         aspectBox.spacing = 4
         aspectBox.distribution = .fill
         aspectW.widthAnchor.constraint(equalTo: aspectH.widthAnchor).isActive = true
         aspectBox.views[1].setContentHuggingPriority(.required, for: .horizontal)
         bitrateRow = Kit.row("Bitrate", mbps, tip: "Average video bitrate")
+        bitrateAutoRow = Kit.checkRow(bitrateAuto)
         qualityRow = Kit.row("Level", qualityField, tip: "Encoder quality")
         widthRow = Kit.row("Width", widthField, tip: "Output width in pixels")
         aspectRow = Kit.row("Ratio", aspectBox, tip: "Custom aspect ratio width : height")
@@ -58,7 +69,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
             Kit.row("Format", containerPopup, tip: "File format"),
             Kit.row("Codec", codecPopup, tip: "Video codec"),
             Kit.row("Rate", ratePopup, tip: "Rate control"),
-            bitrateRow, qualityRow,
+            bitrateRow, bitrateAutoRow, qualityRow,
             Kit.row("Resolution", resolutionPopup, tip: "Short side of the output"), widthRow,
             Kit.row("Aspect", aspectPopup, tip: "Aspect ratio of the output"), aspectRow,
             Kit.row("Size", sizeLabel, tip: "Resulting output size in pixels"),
@@ -81,12 +92,16 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         resolutionPopup.selectItem(at: ExportSettings.Resolution.allCases.firstIndex(of: s.resolution) ?? 0)
         aspectPopup.selectItem(at: ExportSettings.Aspect.allCases.firstIndex(of: s.aspect) ?? 0)
         func show(_ f: NSTextField, _ text: String) { if f.currentEditor() == nil { f.stringValue = text } }   // do not clobber typing
-        show(bitrateField, s.bitrateMbps.map { String(format: "%g", $0) } ?? "")
         show(widthField, "\(s.customWidth)")
         show(aspectW, "\(s.customAspectW)"); show(aspectH, "\(s.customAspectH)")
         show(crossfadeField, String(format: "%g", s.crossfade))
         qualityField.setValue(s.quality)
+        bitrateAuto.state = s.bitrateMbps == nil ? .on : .off
+        bitrateSlider.isEnabled = s.bitrateMbps != nil
+        bitrateSlider.doubleValue = s.effectiveBitrateMbps
+        bitrateValue.stringValue = ExportSettings.bitrateLabel(s.effectiveBitrateMbps)
         bitrateRow.isHidden = s.rateControl != .bitrate
+        bitrateAutoRow.isHidden = s.rateControl != .bitrate
         qualityRow.isHidden = s.rateControl != .quality
         widthRow.isHidden = s.resolution != .custom
         aspectRow.isHidden = s.aspect != .custom
@@ -106,7 +121,7 @@ final class ExportSettingsView: NSView, NSTextFieldDelegate {
         s.rateControl = pick(ratePopup, s.rateControl)
         s.resolution = pick(resolutionPopup, s.resolution)
         s.aspect = pick(aspectPopup, s.aspect)
-        s.bitrateMbps = num(bitrateField).flatMap { $0 > 0 ? $0 : nil }
+        s.bitrateMbps = bitrateAuto.state == .on ? nil : ExportSettings.clampBitrate(bitrateSlider.doubleValue)
         s.quality = qualitySlider.doubleValue
         if let w = num(widthField) { s.customWidth = min(max(Int(w), 16), 8192) }
         if let w = num(aspectW), w >= 1 { s.customAspectW = min(Int(w), 100) }

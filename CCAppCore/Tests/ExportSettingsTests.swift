@@ -79,4 +79,31 @@ final class ExportSettingsTests: XCTestCase {
         var p = ProjectSidecar(); var s = ExportSettings(); s.codec = .h264; p.exportSettings = s
         XCTAssertEqual(ProjectSidecar.decode(p.encoded()!)?.exportSettings, s)
     }
+
+    func testBitrateClampSnapAndAutomatic() {
+        XCTAssertEqual(ExportSettings.clampBitrate(0.2), 1)
+        XCTAssertEqual(ExportSettings.clampBitrate(250), 100)
+        XCTAssertEqual(ExportSettings.clampBitrate(12.4), 12)
+        XCTAssertEqual(ExportSettings.clampBitrate(12.6), 13)
+        var s = ExportSettings()
+        XCTAssertEqual(s.automaticBitrateMbps, 20); XCTAssertEqual(s.effectiveBitrateMbps, 20)
+        s.resolution = .p2160
+        XCTAssertEqual(s.automaticBitrateMbps, 50); XCTAssertEqual(s.effectiveBitrateMbps, 50)
+        s.bitrateMbps = 500
+        XCTAssertEqual(s.bitRate, 100_000_000)
+        s.bitrateMbps = 0.3
+        XCTAssertEqual(s.bitRate, 1_000_000)
+        s.bitrateMbps = 0
+        XCTAssertEqual(s.bitRate, 50_000_000)   // non-positive = automatic, as before
+        XCTAssertEqual(ExportSettings.bitrateLabel(20), "20 Mbps")
+        XCTAssertEqual(ExportSettings.bitrateLabel(1000), "100 Mbps")
+    }
+
+    func testOldNumericBitrateStillDecodes() throws {
+        let s = try JSONDecoder().decode(ExportSettings.self, from: Data(#"{"bitrateMbps": 8.5}"#.utf8))
+        XCTAssertEqual(s.bitrateMbps, 8.5)
+        XCTAssertEqual(s.bitRate, 9_000_000)
+        let a = try JSONDecoder().decode(ExportSettings.self, from: Data("{}".utf8))
+        XCTAssertNil(a.bitrateMbps)
+    }
 }

@@ -98,12 +98,31 @@ struct ExportSettings: Codable, Equatable {
         return (even(w), even(w * Double(r.h) / Double(r.w)))
     }
 
-    /// Effective average bitrate in bits per second for `.bitrate`.
-    var bitRate: Int {
-        if let m = bitrateMbps, m > 0 { return Int(m * 1_000_000) }
-        let s = outputSize
-        return s.width * s.height > 3_000_000 ? 50_000_000 : 20_000_000
+    /// Range of the bitrate slider in Mbps (1 Mbps steps).
+    static let bitrateRange: ClosedRange<Double> = 1...100
+
+    /// Clamps to `bitrateRange` and snaps to whole Mbps (old saved values may be outside or fractional).
+    static func clampBitrate(_ mbps: Double) -> Double {
+        min(max(mbps.rounded(), bitrateRange.lowerBound), bitrateRange.upperBound)
     }
+
+    /// The automatic bitrate in Mbps for the current output size: 20 up to ~3 MP, 50 above.
+    var automaticBitrateMbps: Double {
+        let s = outputSize
+        return s.width * s.height > 3_000_000 ? 50 : 20
+    }
+
+    /// The bitrate in Mbps that is used: the stored value (clamped) or the automatic one.
+    var effectiveBitrateMbps: Double {
+        if let m = bitrateMbps, m > 0 { return Self.clampBitrate(m) }
+        return automaticBitrateMbps
+    }
+
+    /// Text for the read-only value label, e.g. "20 Mbps".
+    static func bitrateLabel(_ mbps: Double) -> String { "\(Int(clampBitrate(mbps))) Mbps" }
+
+    /// Effective average bitrate in bits per second for `.bitrate`.
+    var bitRate: Int { Int(effectiveBitrateMbps * 1_000_000) }
 
     /// Compression properties for the video input.
     var compressionProperties: [String: Any] {
