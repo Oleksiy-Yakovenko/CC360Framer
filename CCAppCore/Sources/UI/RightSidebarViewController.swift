@@ -106,10 +106,13 @@ final class ExportTabViewController: ModelViewController {
             Kit.title("Export", tip: "Format and size used by the Actions > Export… (⌘E). Saved per video and as the default for new videos."),
             settingsView,
             Kit.grid([
-                Kit.checkRow(frameCheck),
-                Kit.checkRow(cutsCheck),
                 Kit.checkRow(fovCheck),
                 Kit.row("FOV", fovRow, tip: "Global vertical field of view in degrees"),
+            ]),
+            Kit.title("Preview", tip: "These options only affect the preview in the player, never the exported file."),
+            Kit.grid([
+                Kit.checkRow(frameCheck),
+                Kit.checkRow(cutsCheck),
             ]),
             Kit.title("Captions", tip: "Default look of all captions (Captions timeline), in preview and export. Saved per video and as the default for other videos. Individual captions can override every setting in the Inspector tab."),
             Kit.grid([
