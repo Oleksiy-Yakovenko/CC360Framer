@@ -401,17 +401,19 @@ final class InspectorTabViewController: ModelViewController, NSTextFieldDelegate
         audVolume.toolTip = "Volume of this clip in percent, 0 to 100"
         audVolumeRow = Kit.sliderRow(audVolume, decimals: 0, step: 1, target: self, action: #selector(audioVolumeChanged(_:)))
         audVolumeRow.toolTip = audVolume.toolTip
-        audBrowse = Kit.button("Browse…", tip: "Choose an audio file", target: self, action: #selector(audioBrowse))
-        audReveal = Kit.button("Show in Finder", tip: "Reveal the audio file in Finder", target: self, action: #selector(audioReveal))
-        let audButtons = NSStackView(views: [audBrowse, audReveal])
-        audButtons.orientation = .horizontal
-        audButtons.spacing = 8
+        audReveal = Kit.iconButton("arrow.right.circle.fill", tip: "Show in Finder", target: self, action: #selector(audioReveal))
+        audBrowse = Kit.iconButton("folder.fill", tip: "Choose an audio file…", target: self, action: #selector(audioBrowse))
+        audPath.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let audFile = NSStackView(views: [audPath, audReveal, audBrowse])
+        audFile.orientation = .horizontal
+        audFile.spacing = 4
+        audFile.distribution = .fill
         audNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         audNote.textColor = .systemRed
         audNote.identifier = Kit.fullWidthID
         audNote.isHidden = true
         probes.onChange = { [weak self] in self?.refresh() }
-        audioFileForm = Kit.grid([Kit.row("File", audPath), Kit.checkRow(audButtons)])
+        audioFileForm = Kit.grid([Kit.row("File", audFile)])
         audioForm = Kit.grid([Kit.row("Start (s)", audStart), Kit.row("End (s)", audEnd), Kit.row("File start (s)", audOffset),
                               Kit.row("Fade in (s)", audFadeIn), Kit.row("Fade out (s)", audFadeOut), Kit.row("Volume (%)", audVolumeRow)])
         keyForm = Kit.grid([Kit.row("Time (s)", timeField), Kit.row("Yaw (°)", yawField),

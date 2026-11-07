@@ -72,6 +72,21 @@ enum Kit {
         return b
     }
 
+    /// A small borderless button with just an SF Symbol (the description is its tooltip and accessibility label).
+    static func iconButton(_ symbol: String, tip: String, target: AnyObject, action: Selector) -> NSButton {
+        let b = NSButton(image: Self.symbol(symbol, tip), target: target, action: action)
+        b.isBordered = false
+        b.imagePosition = .imageOnly
+        b.imageScaling = .scaleProportionallyDown
+        b.contentTintColor = .secondaryLabelColor
+        b.toolTip = tip
+        b.setAccessibilityLabel(tip)
+        b.setContentHuggingPriority(.required, for: .horizontal)
+        b.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        b.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        return b
+    }
+
     static func symbol(_ name: String, _ description: String) -> NSImage {
         NSImage(systemSymbolName: name, accessibilityDescription: description) ?? NSImage()
     }
