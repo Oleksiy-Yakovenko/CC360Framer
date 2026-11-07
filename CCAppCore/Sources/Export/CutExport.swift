@@ -3,36 +3,7 @@ import CoreVideo
 
 /// Pieces of the export that apply cut regions (see `TimeMap` for the crossfade semantics).
 enum CutExport {
-    /// Audio for the output timeline: the kept segments of each enabled source track laid out back to back, overlapping
-    /// by the dissolve length. Overlapping needs two composition tracks per source track (a track cannot overlap
-    /// itself); segments alternate between them and get matching volume ramps (fade out / fade in).
-    static func audio(from source: AVComposition, trackIDs: [CMPersistentTrackID], map: TimeMap) throws -> (AVMutableComposition, AVAudioMix, [AVAssetTrack]) {
-        let comp = AVMutableComposition()
-        let mix = AVMutableAudioMix()
-        var params: [AVMutableAudioMixInputParameters] = []
-        let scale: CMTimeScale = 48000
-        func t(_ s: Double) -> CMTime { CMTime(seconds: s, preferredTimescale: scale) }
-        for id in trackIDs {
-            guard let src = source.track(withTrackID: id) else { continue }
-            let lanes = (0..<2).compactMap { _ in comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) }
-            guard lanes.count == 2 else { continue }
-            let lanePars = lanes.map { AVMutableAudioMixInputParameters(track: $0) }
-            for (i, seg) in map.segments.enumerated() {
-                let lane = i % 2
-                try lanes[lane].insertTimeRange(CMTimeRange(start: t(seg.sourceStart), duration: t(seg.length)), of: src, at: t(seg.outputStart))
-                if i > 0, map.fades[i - 1] > 0 {
-                    lanePars[lane].setVolumeRamp(fromStartVolume: 0, toEndVolume: 1, timeRange: CMTimeRange(start: t(seg.outputStart), duration: t(map.fades[i - 1])))
-                }
-                if i < map.fades.count, map.fades[i] > 0 {
-                    lanePars[lane].setVolumeRamp(fromStartVolume: 1, toEndVolume: 0, timeRange: CMTimeRange(start: t(seg.outputEnd - map.fades[i]), duration: t(map.fades[i])))
-                    lanePars[lane].setVolume(1, at: t(seg.outputEnd))   // the lane is silent here; a later segment must not inherit 0
-                }
-            }
-            params += lanePars
-        }
-        mix.inputParameters = params
-        return (comp, mix, comp.tracks(withMediaType: .audio))
-    }
+    // The audio for the output timeline (kept segments of each enabled track, dissolve lanes) lives in `AudioExport`.
 
     /// Hands out the decoded frame that is current at a given source time from one segment's reader.
     final class FrameFeed {

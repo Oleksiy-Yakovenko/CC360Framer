@@ -88,12 +88,14 @@ enum BatchJob {
         let path = CameraPath(keys: keys)
         progress(.exporting(0))
         let box = UncheckedBox((session.composition, session.videoComposition, mix, stabilizer))
-        try await Task.detached(priority: .userInitiated) {
+        let clips = project.audioClips ?? []
+        let skipped = try await Task.detached(priority: .userInitiated) {
             try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
                              audioTrackIDs: audioIDs, path: path, global: global, fallback: (yaw: 0, pitch: 0, fov: 70),
-                             stabilizer: box.value.3, settings: settings, timeMap: map, to: output,
+                             stabilizer: box.value.3, settings: settings, timeMap: map, audioClips: clips, to: output,
                              progress: { progress(.exporting($0)) }, cancel: cancel)
         }.value
+        if skipped > 0 { log("\(skipped) audio clip(s) skipped (file missing or without audio)") }
         log("exported \(output.path)")
     }
 

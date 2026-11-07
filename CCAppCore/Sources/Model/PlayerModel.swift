@@ -950,6 +950,7 @@ extension PlayerModel {
         exportProgress = 0
         statusText = nil
         let audioIDs = audioOptions.filter(\.enabled).map(\.id)
+        let clips = audioClips
         let mix = audioMix()
         let path = self.path
         let fallback = (yaw: viewState.yaw, pitch: viewState.pitch, fov: viewState.fovDegrees)
@@ -960,10 +961,14 @@ extension PlayerModel {
             do {
                 await self?.waitForPlace()   // the freshest place, but never longer than a few seconds
                 let overlays = await MainActor.run { self?.exportOverlays(settings: settings) ?? .empty }
-                try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
-                                 audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map, to: url,
+                let skipped = try Exporter.run(overlays: overlays, composition: box.value.0, videoComposition: box.value.1, audioMix: box.value.2,
+                                 audioTrackIDs: audioIDs, path: path, global: global, fallback: fallback, stabilizer: box.value.3, settings: settings, timeMap: map,
+                                 audioClips: clips, to: url,
                                  progress: { p in Task { @MainActor in self?.exportProgress = p } }, cancel: flag)
-                await MainActor.run { self?.exportProgress = nil; self?.statusText = "Exported \(url.lastPathComponent)." }
+                await MainActor.run {
+                    self?.exportProgress = nil
+                    self?.statusText = "Exported \(url.lastPathComponent)." + (skipped > 0 ? " \(skipped) audio clip(s) skipped (file missing or without audio)." : "")
+                }
             } catch {
                 await MainActor.run {
                     self?.exportProgress = nil

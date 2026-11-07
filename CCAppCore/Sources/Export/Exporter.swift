@@ -6,12 +6,13 @@ import Metal
 enum Exporter {
     struct Failure: LocalizedError { let errorDescription: String? }
 
-    /// Blocking; call from a background thread.
+    /// Blocking; call from a background thread. Returns how many audio clips were skipped (file missing, no audio track).
+    @discardableResult
     static func run(overlays: OverlayBundle, composition: AVMutableComposition, videoComposition: AVVideoComposition,
                     audioMix: AVAudioMix?, audioTrackIDs: [CMPersistentTrackID],
                     path: CameraPath, global: GlobalFov, fallback: (yaw: Float, pitch: Float, fov: Float),
-                    stabilizer: Stabilizer?, settings: ExportSettings, timeMap: TimeMap? = nil, to url: URL,
-                    progress: @escaping @Sendable (Double) -> Void, cancel: CancelFlag) throws {
+                    stabilizer: Stabilizer?, settings: ExportSettings, timeMap: TimeMap? = nil, audioClips: [AudioClip] = [], to url: URL,
+                    progress: @escaping @Sendable (Double) -> Void, cancel: CancelFlag) throws -> Int {
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure(errorDescription: "No Metal device.") }
         try? FileManager.default.removeItem(at: url)
         // With cuts the video comes from one reader per kept segment (see `CutExport`) and the audio from its own composition.
@@ -32,14 +33,21 @@ enum Exporter {
         vout.alwaysCopiesSampleData = false
         if cutMap == nil { reader.add(vout) }
 
+        // The audio goes through its own composition (and reader) whenever it is not the plain source tracks: with cuts
+        // (kept segments, dissolve lanes) or with audio clips (one composition holds source tracks and clip pieces).
         var audioReader = reader
-        var cutAudio: AVMutableComposition?
+        var builtAudio: AudioExport.Built?
         var audioTracks: [AVAssetTrack] = audioTrackIDs.compactMap { composition.track(withTrackID: $0) }
         var mixToUse = audioMix
-        if let cutMap, !audioTracks.isEmpty {
-            let (comp, mix, tracks) = try CutExport.audio(from: composition, trackIDs: audioTrackIDs, map: cutMap)
-            cutAudio = comp; mixToUse = mix; audioTracks = tracks
-            audioReader = try AVAssetReader(asset: comp)
+        var skippedClips = 0
+        if cutMap != nil || !audioClips.isEmpty {
+            let built = try AudioExport.build(source: composition, trackIDs: audioTrackIDs, map: cutMap,
+                                              sourceDuration: composition.duration.seconds, clips: audioClips)
+            skippedClips = built?.skipped ?? audioClips.count
+            builtAudio = built
+            audioTracks = built?.tracks ?? []
+            mixToUse = built?.mix
+            if let built { audioReader = try AVAssetReader(asset: built.composition) }
         }
         nonisolated(unsafe) var aout: AVAssetReaderAudioMixOutput?
         if !audioTracks.isEmpty {
@@ -51,7 +59,7 @@ enum Exporter {
             audioReader.add(o)
             aout = o
         }
-        _ = cutAudio   // keep the audio composition alive while reading
+        _ = builtAudio   // keep the audio composition (and the clip files) alive while reading
 
         nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: settings.container.fileType)
         let size = settings.outputSize
@@ -76,7 +84,8 @@ enum Exporter {
         guard writer.startWriting() else { throw writer.error ?? Failure(errorDescription: "Cannot start writing.") }
         if cutMap == nil {
             guard reader.startReading() else { throw reader.error ?? Failure(errorDescription: "Cannot start reading.") }
-        } else if aout != nil {
+        }
+        if aout != nil, audioReader !== reader {
             guard audioReader.startReading() else { throw audioReader.error ?? Failure(errorDescription: "Cannot start reading audio.") }
         }
         writer.startSession(atSourceTime: .zero)
@@ -173,7 +182,7 @@ enum Exporter {
         group.wait()
 
         if let failure {
-            reader.cancelReading(); writer.cancelWriting()
+            reader.cancelReading(); audioReader.cancelReading(); writer.cancelWriting()
             try? FileManager.default.removeItem(at: url)
             throw failure
         }
@@ -181,5 +190,6 @@ enum Exporter {
         writer.finishWriting { done.signal() }
         done.wait()
         if writer.status != .completed { throw writer.error ?? Failure(errorDescription: "Export failed.") }
+        return skippedClips
     }
 }
