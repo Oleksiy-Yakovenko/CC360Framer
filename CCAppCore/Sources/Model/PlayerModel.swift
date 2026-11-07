@@ -766,8 +766,10 @@ extension PlayerModel {
         recording = nil
     }
 
-    func select(_ key: Keyframe) {
+    /// Selects a keyframe and (by default) moves the playhead to it; a click on the timeline strip selects without seeking.
+    func select(_ key: Keyframe, seek: Bool = true) {
         selectedKey = key.id
+        guard seek else { return }
         position = key.time
         scrub(to: key.time)
         endScrub(at: key.time)

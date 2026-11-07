@@ -33,6 +33,9 @@ final class TimelineMarkersView: NSView {
     var onScrub: ((Double) -> Void)?
     var onScrubEnd: ((Double) -> Void)?
     private var dragging: (id: UUID, edge: RegionEdit.Edge)?
+    /// Drag of a region body: the pointer's offset from the region start at mouseDown (seconds); `started` once the pointer moved a few px.
+    private var bodyDrag: (id: UUID, offset: Double, downX: Double, started: Bool)?
+    private static let bodyDragThreshold = 3.0
     private var dragX: Double = 0
     private var autoscrollTimer: Timer?
     private var autoscrollLast = CACurrentMediaTime()
@@ -144,7 +147,13 @@ final class TimelineMarkersView: NSView {
         guard let adapter else { return }
         let p = convert(event.locationInWindow, from: nil)
         switch layoutInfo.hit(items, selected: selected, at: p.x) {
-        case .point(let id), .region(let id): adapter.select(id)
+        case .point(let id): adapter.selectQuietly(id)   // a click selects; it never moves the playhead or the window
+        case .region(let id):
+            // A click only selects (no seek: the window stays where it is); dragging the body moves the region.
+            adapter.selectQuietly(id)
+            if let item = items.first(where: { $0.id == id }) {
+                bodyDrag = (id, layoutInfo.time(p.x) - item.start, p.x, false)
+            }
         case .regionStart(let id): startDrag(adapter, id, .start)
         case .regionEnd(let id): startDrag(adapter, id, .end)
         case nil: break
@@ -158,17 +167,30 @@ final class TimelineMarkersView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard dragging != nil else { return }
-        dragX = convert(event.locationInWindow, from: nil).x
+        let x = convert(event.locationInWindow, from: nil).x
+        if var b = bodyDrag, !b.started {
+            guard abs(x - b.downX) > Self.bodyDragThreshold else { return }
+            b.started = true
+            bodyDrag = b
+            adapter?.beginDrag()
+        }
+        guard dragging != nil || bodyDrag != nil else { return }
+        dragX = x
         applyDrag()
         updateAutoscrollTimer()
     }
 
     override func mouseUp(with event: NSEvent) {
         stopAutoscroll()
-        guard dragging != nil else { return }
-        dragging = nil
-        adapter?.endDrag()
+        if let b = bodyDrag {
+            bodyDrag = nil
+            if b.started { adapter?.endMove() }
+        } else if dragging != nil {
+            dragging = nil
+            adapter?.endDrag()
+        } else {
+            return
+        }
         if scrubStarted {
             scrubStarted = false
             onScrubEnd?(playhead)
@@ -177,8 +199,12 @@ final class TimelineMarkersView: NSView {
 
     /// Moves the dragged edge to the time under the pointer in the current window.
     private func applyDrag() {
-        guard let adapter, let d = dragging else { return }
-        adapter.drag(d.id, edge: d.edge, to: layoutInfo.time(dragX))
+        guard let adapter else { return }
+        if let b = bodyDrag {
+            if b.started { adapter.dragRegion(b.id, to: layoutInfo.time(dragX) - b.offset) }
+        } else if let d = dragging {
+            adapter.drag(d.id, edge: d.edge, to: layoutInfo.time(dragX))
+        }
     }
 
     private func updateAutoscrollTimer() {
@@ -204,7 +230,7 @@ final class TimelineMarkersView: NSView {
         let now = CACurrentMediaTime()
         let dt = min(now - autoscrollLast, 0.1)
         autoscrollLast = now
-        guard dragging != nil else { stopAutoscroll(); return }
+        guard dragging != nil || bodyDrag?.started == true else { stopAutoscroll(); return }
         let speed = TimelineWindow.autoscrollSpeed(pointerX: dragX, width: bounds.width, visible: layoutInfo.visible)
         if speed == 0 { stopAutoscroll(); return }
         let t = max(0, min(duration, playhead + speed * dt))

@@ -42,9 +42,9 @@ extension PlayerModel {
     }
 
     /// Selects a card keyframe and puts the playhead there.
-    func selectCardKey(_ id: UUID) {
+    func selectCardKey(_ id: UUID, seek: Bool = true) {
         selectedCardKey = id
-        guard let k = cardKeys.first(where: { $0.id == id }) else { return }
+        guard seek, let k = cardKeys.first(where: { $0.id == id }) else { return }
         position = k.time
         scrub(to: k.time)
         endScrub(at: k.time)
@@ -96,6 +96,7 @@ struct LocationCardTimeline: TimelineAdapter {
     var deleteConfirm: (String, String) { ("Delete the selected location card?", "You can undo it with Edit > Undo.") }
     var clearConfirm: (String, String) { ("Clear all location cards?", "The automatic card at the start applies again. You can undo it with Edit > Undo.") }
     func select(_ id: UUID) { model.selectCardKey(id) }
+    func selectQuietly(_ id: UUID) { model.selectCardKey(id, seek: false) }
     func add() { model.addCardKey() }
     func deleteSelected() { model.deleteSelectedCardKey() }
     func clear() { model.clearCardKeys() }

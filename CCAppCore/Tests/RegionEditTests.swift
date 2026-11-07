@@ -7,6 +7,45 @@ final class RegionEditTests: XCTestCase {
         RegionEdit.add(r, at: t, length: len, duration: dur) { CutRegion(start: $0, end: $1) }
     }
 
+    private func mv(_ r: [CutRegion], _ i: Int, to s: Double, dur: Double = 20, overlap: Bool = false) -> [CutRegion] {
+        RegionEdit.move(r, id: r[i].id, toStart: s, duration: dur, allowOverlap: overlap)
+    }
+
+    func testMoveKeepsLength() {
+        let r = mv([cut(2, 5)], 0, to: 10)
+        XCTAssertEqual(r[0].start, 10); XCTAssertEqual(r[0].end, 13)
+    }
+
+    func testMoveClampsToClip() {
+        XCTAssertEqual(mv([cut(2, 5)], 0, to: -4)[0].start, 0)
+        XCTAssertEqual(mv([cut(2, 5)], 0, to: -4)[0].end, 3)
+        let e = mv([cut(2, 5)], 0, to: 99)
+        XCTAssertEqual(e[0].end, 20); XCTAssertEqual(e[0].start, 17)
+    }
+
+    func testMoveStopsAtNeighbours() {
+        let regions = [cut(1, 3), cut(6, 8), cut(14, 16)]
+        let right = mv(regions, 1, to: 13)
+        XCTAssertEqual(right[1].end, 14); XCTAssertEqual(right[1].start, 12)
+        let left = mv(regions, 1, to: 0)
+        XCTAssertEqual(left[1].start, 3); XCTAssertEqual(left[1].end, 5)
+        XCTAssertEqual(right[0], regions[0]); XCTAssertEqual(right[2], regions[2])
+    }
+
+    func testMoveDoesNotJumpOver() {
+        let r = mv([cut(0, 2), cut(5, 7), cut(10, 12)], 0, to: 18)
+        XCTAssertEqual(r[0].end, 5)
+    }
+
+    func testMoveTinyRegionAndOverlapAllowed() {
+        let tiny = mv([cut(1, 1.2)], 0, to: 5)
+        XCTAssertEqual(tiny[0].start, 5, accuracy: 1e-9); XCTAssertEqual(tiny[0].end, 5.2, accuracy: 1e-9)
+        let o = mv([cut(1, 3), cut(6, 8)], 1, to: 2, overlap: true)
+        XCTAssertEqual(o[1].start, 2)
+        let one = [cut(1, 3)]
+        XCTAssertEqual(mv(one, 0, to: .nan), one)
+    }
+
     func testAddAtPlayhead() {
         let r = add([], at: 5)!
         XCTAssertEqual(r.added.start, 5); XCTAssertEqual(r.added.end, 8)

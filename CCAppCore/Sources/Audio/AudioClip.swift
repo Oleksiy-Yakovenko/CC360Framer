@@ -103,23 +103,33 @@ enum AudioClipEdit {
     }
 
     /// Moves one edge for dragging; it stops at the video ends and `minLength` from the other edge, so it never fails.
-    /// Dragging the start edge keeps the audio under its time stamp: the file offset moves with it (never below 0, in
-    /// which case the start stops there too).
+    /// Only the edge moves: the file offset ("File start") is its own setting and is never changed by dragging.
     static func moveEdge(_ clips: [AudioClip], id: UUID, edge: RegionEdit.Edge, to time: Double, duration: Double) -> [AudioClip] {
         guard let i = clips.firstIndex(where: { $0.id == id }), time.isFinite else { return clips }
         var out = clips
         let c = clips[i]
         switch edge {
         case .start:
-            let lowest = max(0, c.start - c.fileOffset)
-            let s = max(lowest, min(time, c.end - minLength))
-            out[i].fileOffset = c.fileOffset + (s - c.start)
-            out[i].start = s
+            out[i].start = max(0, min(time, c.end - minLength))
         case .end:
             out[i].end = min(duration, max(time, c.start + minLength))
         }
         normalize(&out[i])
         return out   // order is by start; not re-sorted while dragging so the dragged clip keeps its identity in the UI
+    }
+
+    /// Moves a whole clip so that it starts at `start` for dragging: same length, same `fileOffset` (the same part of the
+    /// file plays at the new place), clamped inside the video. Overlapping other clips is fine.
+    static func move(_ clips: [AudioClip], id: UUID, toStart start: Double, duration: Double) -> [AudioClip] {
+        guard let i = clips.firstIndex(where: { $0.id == id }), start.isFinite else { return clips }
+        var out = clips
+        let c = clips[i]
+        let length = c.end - c.start
+        guard length <= duration else { return clips }
+        let s = max(0, min(start, duration - length))
+        out[i].start = s
+        out[i].end = s + length
+        return out
     }
 
     static func setFileOffset(_ clips: [AudioClip], id: UUID, to offset: Double) -> [AudioClip]? {

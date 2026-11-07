@@ -69,10 +69,14 @@ extension PlayerModel {
         cuts = RegionEdit.moveEdge(cuts, id: id, edge: edge, to: time, duration: duration)
     }
 
-    func endCutDrag() {
+    func dragCut(_ id: UUID, toStart start: Double) {
+        cuts = RegionEdit.move(cuts, id: id, toStart: start, duration: duration)
+    }
+
+    func endCutDrag(name: String = "Resize Cut") {
         defer { cutDragStart = nil }
         guard let before = cutDragStart, before.cuts != cuts else { return }
-        cutUndo.register(before, "Resize Cut")
+        cutUndo.register(before, name)
     }
 
     /// Time map for export and preview (`crossfade` is 0 for the preview).
@@ -119,6 +123,9 @@ protocol TimelineAdapter {
     func beginDrag()
     func drag(_ id: UUID, edge: RegionEdit.Edge, to time: Double)
     func endDrag()
+    /// Whole-region drag (body of a region): `beginDrag()`, then `dragRegion` per mouse move, then `endMove()`.
+    func dragRegion(_ id: UUID, to start: Double)
+    func endMove()
 }
 
 extension TimelineAdapter {
@@ -126,6 +133,8 @@ extension TimelineAdapter {
     func beginDrag() {}
     func drag(_ id: UUID, edge: RegionEdit.Edge, to time: Double) {}
     func endDrag() {}
+    func dragRegion(_ id: UUID, to start: Double) {}
+    func endMove() { endDrag() }
 }
 
 @MainActor
@@ -146,6 +155,7 @@ struct KeyframeTimeline: TimelineAdapter {
     var deleteConfirm: (String, String) { ("Delete the selected keyframe?", "You can undo it with Edit > Undo.") }
     var clearConfirm: (String, String) { ("Clear all keyframes?", "This removes every keyframe. You can undo it with Edit > Undo.") }
     func select(_ id: UUID) { if let k = model.keyframes.first(where: { $0.id == id }) { model.select(k) } }
+    func selectQuietly(_ id: UUID) { if let k = model.keyframes.first(where: { $0.id == id }) { model.select(k, seek: false) } }
     func add() { model.setKey() }
     func deleteSelected() { model.deleteSelectedKey() }
     func clear() { model.clearKeys() }
@@ -176,6 +186,8 @@ struct CutTimeline: TimelineAdapter {
     func beginDrag() { model.beginCutDrag() }
     func drag(_ id: UUID, edge: RegionEdit.Edge, to time: Double) { model.dragCut(id, edge: edge, to: time) }
     func endDrag() { model.endCutDrag() }
+    func dragRegion(_ id: UUID, to start: Double) { model.dragCut(id, toStart: start) }
+    func endMove() { model.endCutDrag(name: "Move Cut") }
 }
 
 extension PlayerModel {

@@ -101,10 +101,14 @@ extension PlayerModel {
         audioClips = AudioClipEdit.moveEdge(audioClips, id: id, edge: edge, to: time, duration: duration)
     }
 
-    func endAudioClipDrag() {
+    func dragAudioClip(_ id: UUID, toStart start: Double) {
+        audioClips = AudioClipEdit.move(audioClips, id: id, toStart: start, duration: duration)
+    }
+
+    func endAudioClipDrag(name: String = "Resize Audio Clip") {
         defer { audioClipDragStart = nil }
         guard let before = audioClipDragStart, before.clips != audioClips else { return }
-        audioClipUndo.register(before, "Resize Audio Clip")
+        audioClipUndo.register(before, name)
     }
 }
 
@@ -132,5 +136,7 @@ struct AudioClipTimeline: TimelineAdapter {
     func clear() { model.clearAudioClips() }
     func beginDrag() { model.beginAudioClipDrag() }
     func drag(_ id: UUID, edge: RegionEdit.Edge, to time: Double) { model.dragAudioClip(id, edge: edge, to: time) }
+    func dragRegion(_ id: UUID, to start: Double) { model.dragAudioClip(id, toStart: start) }
+    func endMove() { model.endAudioClipDrag(name: "Move Audio Clip") }
     func endDrag() { model.endAudioClipDrag() }
 }

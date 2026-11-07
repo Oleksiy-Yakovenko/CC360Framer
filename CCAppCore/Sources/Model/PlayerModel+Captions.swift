@@ -81,10 +81,14 @@ extension PlayerModel {
         captions = RegionEdit.moveEdge(captions, id: id, edge: edge, to: time, duration: duration)
     }
 
-    func endCaptionDrag() {
+    func dragCaption(_ id: UUID, toStart start: Double) {
+        captions = RegionEdit.move(captions, id: id, toStart: start, duration: duration)
+    }
+
+    func endCaptionDrag(name: String = "Resize Caption") {
         defer { captionDragStart = nil }
         guard let before = captionDragStart, before.captions != captions else { return }
-        captionUndo.register(before, "Resize Caption")
+        captionUndo.register(before, name)
     }
 
     // MARK: Global style
@@ -133,5 +137,7 @@ struct CaptionTimeline: TimelineAdapter {
     func clear() { model.clearCaptions() }
     func beginDrag() { model.beginCaptionDrag() }
     func drag(_ id: UUID, edge: RegionEdit.Edge, to time: Double) { model.dragCaption(id, edge: edge, to: time) }
+    func dragRegion(_ id: UUID, to start: Double) { model.dragCaption(id, toStart: start) }
+    func endMove() { model.endCaptionDrag(name: "Move Caption") }
     func endDrag() { model.endCaptionDrag() }
 }

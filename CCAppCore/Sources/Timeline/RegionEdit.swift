@@ -51,6 +51,22 @@ enum RegionEdit {
         return out
     }
 
+    /// Moves a whole region so that it starts at `start` for dragging: it keeps its length and stops at the clip ends and
+    /// at the neighbouring regions (no pushing, no jumping over), so it never fails.
+    static func move<R: TimeRegion>(_ regions: [R], id: UUID, toStart start: Double, duration: Double,
+                                    allowOverlap: Bool = false) -> [R] {
+        guard let i = regions.firstIndex(where: { $0.id == id }), start.isFinite else { return regions }
+        var out = regions
+        let r = regions[i]
+        let length = r.end - r.start
+        let (lo, hi) = bounds(regions, of: r, duration: duration, allowOverlap: allowOverlap)
+        let s = max(lo, min(start, hi - length))
+        guard hi - lo >= length else { return regions }
+        out[i].start = s
+        out[i].end = s + length
+        return out
+    }
+
     /// Sets both times (numeric fields). nil when invalid: not finite, outside the clip, shorter than `minLength`, or
     /// overlapping another region (unless allowed).
     static func setRange<R: TimeRegion>(_ regions: [R], id: UUID, start: Double, end: Double, duration: Double,

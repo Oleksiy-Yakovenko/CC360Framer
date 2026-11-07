@@ -51,19 +51,47 @@ final class AudioClipTests: XCTestCase {
         XCTAssertEqual(out.map(\.id), [b.id, a.id])
     }
 
+    func testMoveWholeClipKeepsOffsetLengthAndFades() {
+        let c = clip(2, 6, offset: 7, fi: 1, fo: 1, vol: 0.5)
+        let r = AudioClipEdit.move([c], id: c.id, toStart: 10, duration: 30)[0]
+        XCTAssertEqual(r.start, 10); XCTAssertEqual(r.end, 14)
+        XCTAssertEqual(r.fileOffset, 7); XCTAssertEqual(r.fadeIn, 1); XCTAssertEqual(r.fadeOut, 1); XCTAssertEqual(r.volume, 0.5)
+    }
+
+    func testMoveWholeClipClampsInsideVideo() {
+        let c = clip(2, 6)
+        XCTAssertEqual(AudioClipEdit.move([c], id: c.id, toStart: -3, duration: 30)[0].start, 0)
+        let e = AudioClipEdit.move([c], id: c.id, toStart: 99, duration: 30)[0]
+        XCTAssertEqual(e.end, 30); XCTAssertEqual(e.start, 26)
+    }
+
+    func testMoveWholeClipMayOverlapOthers() {
+        let a = clip(0, 4), b = clip(10, 14)
+        let r = AudioClipEdit.move([a, b], id: b.id, toStart: 2, duration: 30)
+        XCTAssertEqual(r[1].start, 2); XCTAssertEqual(r[0], a)
+    }
+
+    func testMoveWholeClipNonFiniteIgnored() {
+        let c = clip(2, 6)
+        XCTAssertEqual(AudioClipEdit.move([c], id: c.id, toStart: .nan, duration: 30), [c])
+    }
+
     func testMoveEndEdge() {
         let c = clip(2, 6)
         XCTAssertEqual(AudioClipEdit.moveEdge([c], id: c.id, edge: .end, to: 100, duration: 20)[0].end, 20)
         XCTAssertEqual(AudioClipEdit.moveEdge([c], id: c.id, edge: .end, to: 0, duration: 20)[0].end, 2 + AudioClipEdit.minLength, accuracy: 1e-9)
     }
 
-    func testMoveStartEdgeKeepsAudioInPlace() {
+    func testMoveStartEdgeOnlyMovesTheEdge() {
         let c = clip(4, 10, offset: 1)
         let later = AudioClipEdit.moveEdge([c], id: c.id, edge: .start, to: 6, duration: 20)[0]
-        XCTAssertEqual(later.start, 6); XCTAssertEqual(later.fileOffset, 3, accuracy: 1e-9)
-        // dragging left can only reveal the audio that exists before the offset
+        XCTAssertEqual(later.start, 6); XCTAssertEqual(later.fileOffset, 1)   // the file start is a setting of its own
+        // dragging left is free down to 0, whatever the file offset is (also when it is 0)
         let earlier = AudioClipEdit.moveEdge([c], id: c.id, edge: .start, to: 0, duration: 20)[0]
-        XCTAssertEqual(earlier.start, 3, accuracy: 1e-9); XCTAssertEqual(earlier.fileOffset, 0, accuracy: 1e-9)
+        XCTAssertEqual(earlier.start, 0); XCTAssertEqual(earlier.fileOffset, 1)
+        let fromZeroOffset = clip(100, 130)
+        XCTAssertEqual(AudioClipEdit.moveEdge([fromZeroOffset], id: fromZeroOffset.id, edge: .start, to: 20, duration: 600)[0].start, 20)
+        XCTAssertEqual(AudioClipEdit.moveEdge([fromZeroOffset], id: fromZeroOffset.id, edge: .start, to: -5, duration: 600)[0].start, 0)
         // never past the end
         let past = AudioClipEdit.moveEdge([c], id: c.id, edge: .start, to: 50, duration: 20)[0]
         XCTAssertEqual(past.start, 10 - AudioClipEdit.minLength, accuracy: 1e-9)
