@@ -478,7 +478,6 @@ final class PlayerModel: ObservableObject {
             self.position = 0
             self.title = url.lastPathComponent
             installObservers(item)
-            audioClipsAudioChanged()
             cancelRecording()
             isRecording = false
             viewState.reset()
@@ -497,6 +496,8 @@ final class PlayerModel: ObservableObject {
             }
             telemetry = Telemetry.load(url: url)
             loadProject(for: url)
+            // The clips come from the project (whose load suppresses the change handlers), so the clip player is built now.
+            audioClipsAudioChanged()
             viewState.yaw = viewState.forwardYaw   // the initial view looks along the locked direction (0 without the lock)
             loadPlace(for: url)
             rebuildStabilizer()
