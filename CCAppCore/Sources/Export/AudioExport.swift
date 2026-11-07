@@ -10,6 +10,11 @@ enum AudioExport {
         let tracks: [AVAssetTrack]
         /// Clips left out because their file is missing, has no audio or no path.
         let skipped: Int
+        /// The plan pieces that got a composition track, with that track's ID (parallel arrays), and the probed file
+        /// infos by path: lets the preview recompute the mix (volume / fades) without rebuilding the composition.
+        var pieces: [AudioMixPlan.Piece] = []
+        var pieceTrackIDs: [CMPersistentTrackID] = []
+        var infos: [String: AudioFileInfo] = [:]
         /// The clip file assets stay alive as long as this value does.
         fileprivate let files: [AVURLAsset]
     }
@@ -46,8 +51,10 @@ enum AudioExport {
             if let o = open(URL(fileURLWithPath: clip.path)) { opened[clip.path] = o }
         }
         let plan = AudioMixPlan.make(clips: clips, duration: sourceDuration, map: map) { opened[$0.path]?.info }
-        return try build(source: source, trackIDs: trackIDs, map: map, sourceDuration: sourceDuration, plan: plan,
-                         files: opened.mapValues { ($0.asset, $0.track) })
+        var built = try build(source: source, trackIDs: trackIDs, map: map, sourceDuration: sourceDuration, plan: plan,
+                              files: opened.mapValues { ($0.asset, $0.track) })
+        built?.infos = opened.mapValues { $0.info }
+        return built
     }
 
     static func build(source: AVComposition?, trackIDs: [CMPersistentTrackID], map: TimeMap?, sourceDuration: Double,
@@ -96,25 +103,49 @@ enum AudioExport {
 
         // Clip pieces: one composition track each (pieces of overlapping clips and of a dissolve overlap in time).
         var keep: [AVURLAsset] = []
+        var usedPieces: [AudioMixPlan.Piece] = []
+        var usedIDs: [CMPersistentTrackID] = []
         for piece in plan.pieces {
             guard let file = files[piece.path],
                   let track = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
             try track.insertTimeRange(CMTimeRange(start: t(piece.fileStart), duration: t(piece.length)), of: file.track, at: t(piece.outputStart))
             keep.append(file.asset)
-            let p = AVMutableAudioMixInputParameters(track: track)
-            // Start value from time 0 (the track is empty before the piece): a volume set exactly at the piece start would let
-            // the mix glide in from the default 1.0, giving a ~25 ms burst at full level at the start of a fade-in.
-            if let first = piece.volumes.first { p.setVolume(Float(first.volume), at: .zero) }
-            for (a, b) in zip(piece.volumes, piece.volumes.dropFirst()) where b.time - a.time > 1e-6 {
-                p.setVolumeRamp(fromStartVolume: Float(a.volume), toEndVolume: Float(b.volume),
-                                timeRange: CMTimeRange(start: t(a.time), duration: t(b.time - a.time)))
-            }
+            usedPieces.append(piece); usedIDs.append(track.trackID)
+            let p = clipParameters(piece, track: track)
             params.append(p)
         }
         let tracks = comp.tracks(withMediaType: .audio)
         guard !tracks.isEmpty else { return nil }
         let mix = AVMutableAudioMix()
         mix.inputParameters = params
-        return Built(composition: comp, mix: mix, tracks: tracks, skipped: plan.skipped.count, files: keep)
+        return Built(composition: comp, mix: mix, tracks: tracks, skipped: plan.skipped.count, pieces: usedPieces, pieceTrackIDs: usedIDs, files: keep)
+    }
+
+    private static func clipParameters(_ piece: AudioMixPlan.Piece, track: AVMutableCompositionTrack) -> AVMutableAudioMixInputParameters {
+        func t(_ s: Double) -> CMTime { CMTime(seconds: s, preferredTimescale: 48000) }
+        let p = AVMutableAudioMixInputParameters(track: track)
+        // Start value from time 0 (the track is empty before the piece): a volume set exactly at the piece start would let
+        // the mix glide in from the default 1.0, giving a ~25 ms burst at full level at the start of a fade-in.
+        if let first = piece.volumes.first { p.setVolume(Float(first.volume), at: .zero) }
+        for (a, b) in zip(piece.volumes, piece.volumes.dropFirst()) where b.time - a.time > 1e-6 {
+            p.setVolumeRamp(fromStartVolume: Float(a.volume), toEndVolume: Float(b.volume),
+                            timeRange: CMTimeRange(start: t(a.time), duration: t(b.time - a.time)))
+        }
+        return p
+    }
+
+    /// A new mix for the SAME composition of a clips-only `built` (preview), for clips whose volume / fades changed but
+    /// not their path, times or file offset. nil when the new plan does not line up with the built pieces (rebuild then).
+    static func remix(_ built: Built, clips: [AudioClip], sourceDuration: Double) -> AVAudioMix? {
+        let plan = AudioMixPlan.make(clips: clips, duration: sourceDuration, map: nil) { built.infos[$0.path] }
+        guard AudioClipSync.piecesMatch(built.pieces, plan.pieces) else { return nil }
+        var params: [AVMutableAudioMixInputParameters] = []
+        for (piece, id) in zip(plan.pieces, built.pieceTrackIDs) {
+            guard let track = built.composition.track(withTrackID: id) else { return nil }
+            params.append(clipParameters(piece, track: track))
+        }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = params
+        return mix
     }
 }

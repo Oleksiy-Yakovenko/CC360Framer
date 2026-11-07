@@ -6,11 +6,26 @@ import Foundation
 /// The MAIN player is the master: this class never touches the main composition, its audio mix or the dissolve spare
 /// player; cut skips, scrubs and dissolves just look like the main time moving, and the clip player follows it
 /// (explicit calls from `PlayerModel` plus a drift check while playing).
+///
+/// Sync design (see `AudioClipSync`): after any seek or rebuild the clip player is positioned PAUSED at the main time and
+/// only started by the drift check once the main player really runs (rate > 0 and `timeControlStatus == .playing`; the
+/// video composition can take much longer to start than this audio-only player), a little ahead of it to cover its own
+/// start latency. Small drift is removed by nudging the clip player's rate by +/-4 %; only a jump re-seeks. A re-seek of
+/// the running player restarts its audio and takes longer than the check interval, which made the old threshold re-seek
+/// fire again and again (audible periodic wobble) whenever the clip player had started inside the item.
 @MainActor
 final class AudioClipPlayback {
     private let player = AVPlayer()
     /// Keeps the clip file assets of the current item alive.
     private var built: AudioExport.Built?
+    /// The clips and duration `built` was made from (volume / fade changes are applied to its mix in place).
+    private var builtClips: [AudioClip] = []
+    private var builtDuration = 0.0
+    private var rebuildPending = false
+    /// A seek of the clip player is in flight: the drift check waits for it.
+    private var seeking = false
+    /// The clip player's current rate relative to normal (1 = not nudged).
+    private var clipRate = 1.0
     private var itemDuration = 0.0
     private var gate = RebuildGate()
     private var rebuildTask: Task<Void, Never>?
@@ -22,6 +37,8 @@ final class AudioClipPlayback {
     var mainTime: () -> Double = { 0 }
     var mainPlaying: () -> Bool = { false }
     var mainScrubbing: () -> Bool = { false }
+    /// The main player really plays right now (not buffering or seeking).
+    var mainRunning: () -> Bool = { true }
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = false
@@ -36,9 +53,19 @@ final class AudioClipPlayback {
         rebuildTask?.cancel()
         guard !clips.isEmpty, duration > 0 else {
             rebuildTask = nil
-            apply(nil, duration: 0)
+            rebuildPending = false
+            apply(nil, duration: 0, clips: [])
             return
         }
+        // Volume / fade edits only change the audio mix: swap it on the live item, no restart, no rebuild.
+        if !rebuildPending, let built, duration == builtDuration, !AudioClipSync.needsRebuild(old: builtClips, new: clips),
+           let mix = AudioExport.remix(built, clips: clips, sourceDuration: duration) {
+            rebuildTask = nil
+            player.currentItem?.audioMix = mix
+            builtClips = clips
+            return
+        }
+        rebuildPending = true
         rebuildTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(RebuildGate.debounce * 1_000_000_000))
             guard !Task.isCancelled else { return }
@@ -47,13 +74,18 @@ final class AudioClipPlayback {
                 UncheckedBox((try? AudioExport.build(source: nil, trackIDs: [], map: nil, sourceDuration: duration, clips: clips)) ?? nil)
             }.value
             guard let self, !Task.isCancelled, self.gate.isCurrent(token) else { return }
-            self.apply(box.value, duration: duration)
+            self.rebuildPending = false
+            self.apply(box.value, duration: duration, clips: clips)
         }
     }
 
-    private func apply(_ new: AudioExport.Built?, duration: Double) {
+    private func apply(_ new: AudioExport.Built?, duration: Double, clips: [AudioClip]) {
         seekToken += 1
+        seeking = false
+        clipRate = 1
         built = new
+        builtClips = clips
+        builtDuration = duration
         guard let new else {
             player.pause()
             player.replaceCurrentItem(with: nil)
@@ -63,9 +95,11 @@ final class AudioClipPlayback {
         }
         let item = AVPlayerItem(asset: new.composition)
         item.audioMix = new.mix
+        item.audioTimePitchAlgorithm = .timeDomain   // +/-4 % nudges stay inaudible
         player.replaceCurrentItem(with: item)
         itemDuration = duration
-        resync(forceSeek: true)
+        resync()
+        if mainPlaying() { startTimer() }
     }
 
     // MARK: Following the main player
@@ -74,12 +108,14 @@ final class AudioClipPlayback {
     func play(at time: Double? = nil) {
         guard itemDuration > 0 else { return }
         startTimer()
-        resync(forceSeek: true, time: time, playing: true)
+        resync(time: time)
     }
 
     func pause() {
         stopTimer()
         seekToken += 1
+        seeking = false
+        clipRate = 1
         player.pause()
     }
 
@@ -87,6 +123,8 @@ final class AudioClipPlayback {
     func scrub(to time: Double) {
         guard itemDuration > 0 else { return }
         seekToken += 1
+        seeking = false
+        clipRate = 1
         player.pause()
         player.seek(to: cm(min(max(time, 0), itemDuration)), toleranceBefore: cm(0.2), toleranceAfter: cm(0.2))
     }
@@ -94,7 +132,8 @@ final class AudioClipPlayback {
     /// The main player was seeked exactly (end of scrub, cut skip, jump): follow it and resume if it plays.
     func seek(to time: Double) {
         guard itemDuration > 0 else { return }
-        resync(forceSeek: true, time: time, playing: mainPlaying())
+        resync(time: time)
+        if mainPlaying() { startTimer() }
     }
 
     /// Stops and releases everything (opening another video, closing).
@@ -106,48 +145,73 @@ final class AudioClipPlayback {
         player.pause()
         player.replaceCurrentItem(with: nil)
         built = nil
+        builtClips = []
+        rebuildPending = false
+        seeking = false
+        clipRate = 1
         itemDuration = 0
     }
 
     private func cm(_ s: Double) -> CMTime { CMTime(seconds: s, preferredTimescale: 600) }
 
-    /// Seeks the clip player exactly to the (main) time and plays or pauses it, applying the pure decision for the rest.
-    private func resync(forceSeek: Bool, time: Double? = nil, playing: Bool? = nil) {
+    /// Pauses the clip player and seeks it exactly to `time` (default: the main time). It is NOT started here: the drift
+    /// check starts it when the main player really runs.
+    private func resync(time: Double? = nil) {
         let t = min(max(time ?? mainTime(), 0), itemDuration)
-        // An explicit `playing` wins over the scrub flag (end of scrub: the flag is still set while the exact seek runs).
-        let wantPlay = (playing ?? (mainPlaying() && !mainScrubbing())) && t < itemDuration
         seekToken += 1
         let token = seekToken
-        if !wantPlay { player.pause() }
+        clipRate = 1
+        player.pause()
+        seeking = true
         player.seek(to: cm(t), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, token == self.seekToken, wantPlay else { return }
-                self.player.play()
+                guard let self, token == self.seekToken else { return }
+                self.seeking = false
             }
         }
     }
 
-    /// Drift check while the main player plays.
+    /// Follow check while the main player plays (and while it is about to).
     private func tick() {
         guard itemDuration > 0 else { return }
-        let acts = sync.actions(mainTime: mainTime(), mainPlaying: mainPlaying(), scrubbing: mainScrubbing(),
-                                clipTime: player.currentTime().seconds, clipPlaying: player.rate != 0,
+        if !mainPlaying() { stopTimer(); return }
+        guard !seeking else { return }
+        let acts = sync.actions(mainTime: mainTime(), mainPlaying: true, mainRunning: mainRunning(), scrubbing: mainScrubbing(),
+                                clipTime: player.currentTime().seconds, clipPlaying: player.rate != 0, clipRate: clipRate,
                                 clipDuration: itemDuration)
-        for a in acts {
-            switch a {
+        var i = 0
+        while i < acts.count {
+            switch acts[i] {
             case .seek(let t):
-                seekToken += 1
-                player.seek(to: cm(t), toleranceBefore: .zero, toleranceAfter: .zero)
+                seekClip(to: t, thenPlay: false)
+            case .start(let t):
+                seekClip(to: t, thenPlay: true)
             case .play: player.play()
-            case .pause: player.pause()
+            case .pause: player.pause(); clipRate = 1
+            case .setRate(let r):
+                clipRate = r
+                if player.rate != 0 { player.rate = Float(r) }
+            }
+            i += 1
+        }
+    }
+
+    private func seekClip(to t: Double, thenPlay: Bool) {
+        seekToken += 1
+        let token = seekToken
+        seeking = true
+        player.seek(to: cm(t), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, token == self.seekToken else { return }
+                self.seeking = false
+                if thenPlay { self.clipRate = 1; self.player.rate = 1 }
             }
         }
-        if !mainPlaying() { stopTimer() }
     }
 
     private func startTimer() {
         guard driftTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)

@@ -432,6 +432,10 @@ final class PlayerModel: ObservableObject {
         c.mainTime = { [weak self] in self?.player.currentTime().seconds ?? 0 }
         c.mainPlaying = { [weak self] in self?.isPlaying ?? false }
         c.mainScrubbing = { [weak self] in self?.scrubbing ?? false }
+        c.mainRunning = { [weak self] in
+            guard let p = self?.player else { return false }
+            return p.rate > 0 && p.timeControlStatus == .playing
+        }
         return c
     }()
     let dissolve = DissolveState()
