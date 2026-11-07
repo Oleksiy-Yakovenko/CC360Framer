@@ -28,26 +28,27 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
-          xcodebuild build -scheme CC360Framer -destination 'platform=macOS' \
+          xcodebuild build -project CC360Framer.xcodeproj -scheme CC360Framer -destination 'platform=macOS' \
             -derivedDataPath .derived 2>&1 | tee logs/build.log | xcbeautify --renderer github-actions
 
       - name: Analyze
         run: |
           set -o pipefail
-          xcodebuild analyze -scheme CC360Framer -destination 'platform=macOS' \
+          xcodebuild analyze -project CC360Framer.xcodeproj -scheme CC360Framer -destination 'platform=macOS' \
             -derivedDataPath .derived 2>&1 | tee logs/analyze.log | xcbeautify --renderer github-actions
 
       - name: Test
         run: |
           set -o pipefail
-          xcodebuild test -scheme CC360Framer -destination 'platform=macOS' \
+          xcodebuild test -project CCAppCore/CCAppCore.xcodeproj -scheme CCAppCore -destination 'platform=macOS' \
             -derivedDataPath .derived 2>&1 | tee logs/test.log | xcbeautify --renderer github-actions
 
       - name: Package app
         run: |
           set -o pipefail
-          ./build.sh 2>&1 | tee logs/package.log | xcbeautify --renderer github-actions
-          ditto -c -k --sequesterRsrc --keepParent CC360Framer.app CC360Framer.zip
+          xcodebuild build -project CC360Framer.xcodeproj -scheme CC360Framer -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath .derived-release 2>&1 | tee logs/package.log | xcbeautify --renderer github-actions
+          ditto -c -k --sequesterRsrc --keepParent .derived-release/Build/Products/Release/CC360Framer.app CC360Framer.zip
 
       - name: Upload unfiltered logs
         if: always()

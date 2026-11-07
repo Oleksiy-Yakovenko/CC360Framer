@@ -4,24 +4,27 @@ macOS app that opens GoPro `.360` files (tested with Max 2), plays them with mou
 
 ## Build and run
 
-Command line:
-
-    ./build.sh && open CC360Framer.app
-    CC360Framer.app/Contents/MacOS/CC360Framer GS010074.360     # open a file on launch
-
-`./build.sh` makes a release build wrapped as an ad-hoc signed `CC360Framer.app`. You can also use `swift build` (or `swift build -c release`) and `swift run CC360Framer file.360`; these run the bare binary without an app bundle. The new macOS (Liquid Glass) look needs a binary linked against SDK 26 or later, but SwiftPM records the deployment target (14.0) as the SDK version; `Package.swift` therefore passes a linker flag that keeps `minos 14.0` and records SDK 26.2, for every build path (`swift build`, `./build.sh`, Xcode). Check with `vtool -show-build <binary>` (`minos 14.0`, `sdk 26.2`). The app icon (`Sources/CC360Framer/Assets/AppIcon.icon`, an Icon Composer file) is compiled by `build.sh` with `xcrun actool` into `Contents/Resources` (`Assets.car` for macOS 26+ plus an `AppIcon.icns` fallback) and referenced from the generated `Info.plist` (`CFBundleIconName`/`CFBundleIconFile`); if actool fails the build continues without an icon. The folder is excluded from the SwiftPM target. A plain `swift build` / `swift run` / Xcode run of the package executable has no app bundle and shows no icon (Xcode does not apply the `.icon` to a SwiftPM package executable). The package uses Swift 6 language mode (swift-tools-version 6.0; Xcode 26 or a Swift 6 toolchain).
-
-Run the unit tests with `swift test`.
-
 Xcode:
 
-- `open -a Xcode Package.swift` (there is no `.xcodeproj`; Xcode opens the SwiftPM package directly).
-- Pick the `CC360Framer` scheme and "My Mac", then Cmd+B to build or Cmd+R to run.
+- Open `CC360Framer.xcodeproj` (it includes the `CCAppCore/CCAppCore.xcodeproj` framework project, which holds nearly all the code and the unit tests).
+- Pick the `CC360Framer` scheme and "My Mac", then Cmd+B to build or Cmd+R to run. Cmd+U runs the unit tests when the `CCAppCore` scheme is selected.
 - To open a file or set `CC360_*` variables: Product > Scheme > Edit Scheme > Run > Arguments / Environment Variables.
+
+Command line:
+
+    xcodebuild -project CC360Framer.xcodeproj -scheme CC360Framer -configuration Release -derivedDataPath build build
+    open build/Build/Products/Release/CC360Framer.app
+    build/Build/Products/Release/CC360Framer.app/Contents/MacOS/CC360Framer GS010074.360     # open a file on launch
+
+Unit tests (no host app needed):
+
+    xcodebuild -project CCAppCore/CCAppCore.xcodeproj -scheme CCAppCore test
+
+Layout: the app target only has `main.swift`, the app icon (`Sources/Assets/AppIcon.icon`, an Icon Composer file compiled by Xcode) and `Info.plist` (document types, the `.360` type declaration). Everything else is in `CCAppCore/Sources`. The project uses Swift 6 language mode and needs Xcode 26 or later (the new macOS look needs a binary built with the macOS 26 SDK; the deployment target stays macOS 14).
 
 ## Using the app
 
-- **Open:** File > Open (multiple files allowed), File > Open Recent, drag one or more `.360` files onto a window, double-click a `.360` once the app is built with `build.sh` (it declares the type), or pass one as an argument. Every file is a document with its own window and settings (the app uses the standard document system); opening a file that is already open just brings its window forward. Menu items and shortcuts act on the front window. Closing the last window does not quit the app (a running batch keeps going); open files from the menu or the welcome window.
+- **Open:** File > Open (multiple files allowed), File > Open Recent, drag one or more `.360` files onto a window, double-click a `.360` (the app's `Info.plist` declares the type), or pass one as an argument. Every file is a document with its own window and settings (the app uses the standard document system); opening a file that is already open just brings its window forward. Menu items and shortcuts act on the front window. Closing the last window does not quit the app (a running batch keeps going); open files from the menu or the welcome window.
 - **Welcome window:** shown at launch when nothing gets opened, when the Dock icon is clicked with no windows, and any time with Window > Welcome to CC360Framer (Shift-Cmd-1). It lists the recent files (name and folder; files that no longer exist are left out); double-click or Return opens one, *Open…* shows the open panel, Escape closes it. It closes when a document opens.
 - **No save prompts:** a file window is a viewer; every edit (keyframes, cuts, captions, card, settings, direction lock) is written to the sidecars as you make it, also by undo and redo, and anything still waiting on a short timer is written when the window closes or the app quits. A document is never marked as modified, so closing or quitting never asks to save.
 - **Reopening and window layout:** the files that are open when you quit are reopened at the next launch (files that no longer exist are skipped; closing a window yourself forgets the file). Every file remembers its window frame and the widths and collapsed state of its sidebars (saved in the app's preferences, keyed by file path). Launching with a file argument or `CC360_DEBUG` opens just that file and neither reopens nor changes the remembered session.

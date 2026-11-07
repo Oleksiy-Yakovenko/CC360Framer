@@ -1,4 +1,3 @@
-.build/
 *.app
 *.360
 *.reframe.json
@@ -13,3 +12,9 @@
 .DS_Store
 *.sidecars/
 *.project.json
+
+# personal Claude Code instructions and Xcode per-user state
+CLAUDE.local.md
+**/xcuserdata/
+*.xcuserstate
+/build/
