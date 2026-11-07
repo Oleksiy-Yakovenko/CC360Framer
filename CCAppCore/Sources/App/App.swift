@@ -154,7 +154,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let app = submenu("CC360Framer")
         add(app, "About CC360Framer", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
         app.addItem(.separator())
+        // Marking the submenu as NSApp.servicesMenu makes AppKit fill it with the system services.
+        let servicesMenu = NSMenu(title: "Services")
+        app.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = servicesMenu
+        NSApp.servicesMenu = servicesMenu
+        app.addItem(.separator())
         add(app, "Hide CC360Framer", #selector(NSApplication.hide(_:)), "h", target: NSApp)
+        add(app, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], target: NSApp)
+        add(app, "Show All", #selector(NSApplication.unhideAllApplications(_:)), target: NSApp)
         app.addItem(.separator())
         add(app, "Quit CC360Framer", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
 
@@ -177,11 +184,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         add(edit, "Cut", #selector(NSText.cut(_:)), "x")
         add(edit, "Copy", #selector(NSText.copy(_:)), "c")
         add(edit, "Paste", #selector(NSText.paste(_:)), "v")
+        add(edit, "Delete", #selector(NSText.delete(_:)), "", [])
         add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
+        // The standard text submenus act on the first responder (the Inspector's text fields); no target.
+        edit.addItem(.separator())
+        func textSubmenu(_ title: String, _ items: [(String, String, String, NSEvent.ModifierFlags)?]) {
+            let m = NSMenu(title: title)
+            edit.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = m
+            for item in items {
+                guard let (t, a, key, mods) = item else { m.addItem(.separator()); continue }
+                add(m, t, NSSelectorFromString(a), key, mods)
+            }
+        }
+        textSubmenu("Spelling and Grammar", [
+            ("Show Spelling and Grammar", "showGuessPanel:", ":", .command),
+            ("Check Document Now", "checkSpelling:", ";", .command), nil,
+            ("Check Spelling While Typing", "toggleContinuousSpellChecking:", "", .command),
+            ("Check Grammar With Spelling", "toggleGrammarChecking:", "", .command),
+            ("Correct Spelling Automatically", "toggleAutomaticSpellingCorrection:", "", .command)])
+        textSubmenu("Substitutions", [
+            ("Show Substitutions", "orderFrontSubstitutionsPanel:", "", .command), nil,
+            ("Smart Copy/Paste", "toggleSmartInsertDelete:", "", .command),
+            ("Smart Quotes", "toggleAutomaticQuoteSubstitution:", "", .command),
+            ("Smart Dashes", "toggleAutomaticDashSubstitution:", "", .command),
+            ("Smart Links", "toggleAutomaticLinkDetection:", "", .command),
+            ("Data Detectors", "toggleAutomaticDataDetection:", "", .command),
+            ("Text Replacement", "toggleAutomaticTextReplacement:", "", .command)])
+        textSubmenu("Transformations", [
+            ("Make Upper Case", "uppercaseWord:", "", .command),
+            ("Make Lower Case", "lowercaseWord:", "", .command),
+            ("Capitalize", "capitalizeWord:", "", .command)])
+        textSubmenu("Speech", [
+            ("Start Speaking", "startSpeaking:", "", .command),
+            ("Stop Speaking", "stopSpeaking:", "", .command)])
 
         let view = submenu("View")
         add(view, "Toggle Left Sidebar", #selector(toggleSidebar), "s", [.command, .control], target: self)
         add(view, "Toggle Right Sidebar", #selector(toggleInspector), "2", [.command, .option], target: self)
+        view.addItem(.separator())
+        add(view, "Show Toolbar", #selector(NSWindow.toggleToolbarShown(_:)), "t", [.command, .option])
+        add(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
 
         let play = submenu("Playback")
         add(play, "Play / Pause", #selector(togglePlay), " ", [], target: self)
@@ -194,6 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let windows = submenu("Window")
         add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         add(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
+        windows.addItem(.separator())
+        add(windows, "Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), target: NSApp)
         NSApp.windowsMenu = windows
         let welcome = NSMenuItem(title: "Welcome to CC360Framer", action: #selector(showWelcome), keyEquivalent: "1")
         welcome.keyEquivalentModifierMask = [.command, .shift]
@@ -203,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         windows.addItem(.separator())
         add(windows, "Batch Processing…", #selector(showBatch), "b", [.command, .shift], target: self)
 
+        // An (empty) help menu: marking it as NSApp.helpMenu makes AppKit add the standard search field, which finds menu items.
+        NSApp.helpMenu = submenu("Help")
         NSApp.mainMenu = bar
     }
 }
